@@ -1,15 +1,31 @@
 # WSL Traffic Monitor
 
-WSL Traffic Monitor is planned as a lightweight native Windows application for measuring WSL2 network traffic and showing real-time upload/download speeds in a tray/taskbar interface.
+WSL Traffic Monitor is a lightweight native Windows application for measuring WSL2 network traffic and showing real-time upload/download speeds in a tray/taskbar interface.
 
-This repository currently contains the project scaffold and technical research only. Monitoring logic has not been implemented yet.
+This repository currently contains **Phase 0: Validation Harness**, a CLI diagnostics tool designed to query host network adapters, parse `.wslconfig` and WSL installations, check Docker Desktop backend processes, and classify/score each adapter for WSL monitoring suitability.
 
 ## Current Status
 
-- Cargo workspace scaffolded.
-- Research and architecture documents written.
-- CI, formatting, linting, and test configuration added.
-- Runtime crates contain placeholders only.
+- **Phase 0: Validation Harness (Completed)**: Fully implemented CLI tool that aggregates host networking metadata and identifies candidate adapters.
+- **Cross-Compilation (Setup)**: Verified target compilation for both Linux and Windows (using `x86_64-pc-windows-gnu`).
+- **Tests & Lints (Clean)**: All unit tests pass, and codebase is free of clippy/rustc warnings.
+
+## Running the Validation Harness
+
+To cross-compile the validation harness for Windows from a Linux environment:
+```bash
+cargo build --target x86_64-pc-windows-gnu
+```
+The binary will be generated at `target/x86_64-pc-windows-gnu/debug/wsl-traffic-monitor.exe`.
+
+To run the diagnostic utility on a Windows host:
+```cmd
+# Print human-readable report:
+wsl-traffic-monitor.exe
+
+# Export report in structured JSON format:
+wsl-traffic-monitor.exe --json
+```
 
 ## Workspace Layout
 
