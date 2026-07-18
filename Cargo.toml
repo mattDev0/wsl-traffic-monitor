@@ -40,7 +40,7 @@ wsl-traffic-windows = { path = "crates/wsl-traffic-windows" }
 wsl-traffic-wsl = { path = "crates/wsl-traffic-wsl" }
 
 [workspace.lints.rust]
-unsafe_code = "forbid"
+unsafe_code = "deny"
 missing_docs = "warn"
 
 [workspace.lints.clippy]

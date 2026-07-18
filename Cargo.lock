@@ -626,6 +626,7 @@ dependencies = [
  "serde_json",
  "time",
  "wsl-traffic-core",
+ "wsl-traffic-monitor",
  "wsl-traffic-windows",
  "wsl-traffic-wsl",
 ]
@@ -688,10 +689,12 @@ dependencies = [
 name = "wsl-traffic-wsl"
 version = "0.1.0"
 dependencies = [
+ "directories",
  "serde",
  "thiserror",
  "toml",
  "wsl-traffic-core",
+ "wsl-traffic-windows",
 ]
 
 [[package]]
