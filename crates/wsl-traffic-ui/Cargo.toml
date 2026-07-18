@@ -1,0 +1,16 @@
+[package]
+name = "wsl-traffic-ui"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+description = "Native Windows UI boundary for WSL Traffic Monitor."
+
+[dependencies]
+tracing.workspace = true
+wsl-traffic-core.workspace = true
+wsl-traffic-monitor.workspace = true
+
+[lints]
+workspace = true

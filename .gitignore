@@ -1,0 +1,58 @@
+# Project-local agent and generated documentation
+.agent/
+.agents/
+docs/
+
+# Rust build output
+target/
+debug/
+release/
+**/*.rs.bk
+
+# Cargo local overrides and generated package files
+.cargo/config.toml
+Cargo.toml.orig
+*.crate
+
+# Windows/MSVC build artifacts
+*.exe
+*.dll
+*.lib
+*.exp
+*.pdb
+*.ilk
+*.obj
+*.iobj
+*.ipdb
+
+# Logs and diagnostics
+*.log
+logs/
+*.dmp
+*.mdmp
+
+# Local environment/configuration
+.env
+.env.*
+!.env.example
+*.local
+
+# Editor and IDE state
+.idea/
+.vscode/*
+!.vscode/settings.json
+!.vscode/extensions.json
+*.swp
+*.swo
+*~
+
+# OS files
+.DS_Store
+Thumbs.db
+Desktop.ini
+
+# Temporary files
+tmp/
+temp/
+*.tmp
+*.temp

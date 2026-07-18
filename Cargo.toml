@@ -1,0 +1,50 @@
+[workspace]
+resolver = "3"
+members = [
+    "crates/wsl-traffic-agent-protocol",
+    "crates/wsl-traffic-core",
+    "crates/wsl-traffic-diagnostics",
+    "crates/wsl-traffic-monitor",
+    "crates/wsl-traffic-storage",
+    "crates/wsl-traffic-ui",
+    "crates/wsl-traffic-windows",
+    "crates/wsl-traffic-wsl",
+    "apps/wsl-traffic-monitor",
+]
+
+[workspace.package]
+edition = "2024"
+rust-version = "1.85"
+license = "MIT OR Apache-2.0"
+authors = ["WSL Traffic Monitor contributors"]
+
+[workspace.dependencies]
+directories = "6.0.0"
+redb = "2.6.3"
+serde = { version = "1.0.228", features = ["derive"] }
+serde_json = "1.0.145"
+thiserror = "2.0.17"
+time = { version = "0.3.44", features = ["formatting", "macros", "serde"] }
+toml = "0.9.8"
+tracing = "0.1.41"
+tracing-subscriber = { version = "0.3.20", features = ["env-filter", "fmt"] }
+windows = "0.62.2"
+
+wsl-traffic-agent-protocol = { path = "crates/wsl-traffic-agent-protocol" }
+wsl-traffic-core = { path = "crates/wsl-traffic-core" }
+wsl-traffic-diagnostics = { path = "crates/wsl-traffic-diagnostics" }
+wsl-traffic-monitor = { path = "crates/wsl-traffic-monitor" }
+wsl-traffic-storage = { path = "crates/wsl-traffic-storage" }
+wsl-traffic-ui = { path = "crates/wsl-traffic-ui" }
+wsl-traffic-windows = { path = "crates/wsl-traffic-windows" }
+wsl-traffic-wsl = { path = "crates/wsl-traffic-wsl" }
+
+[workspace.lints.rust]
+unsafe_code = "forbid"
+missing_docs = "warn"
+
+[workspace.lints.clippy]
+all = { level = "warn", priority = -1 }
+pedantic = { level = "warn", priority = -1 }
+module_name_repetitions = "allow"
+must_use_candidate = "allow"

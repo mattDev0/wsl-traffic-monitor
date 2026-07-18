@@ -1,0 +1,16 @@
+[package]
+name = "wsl-traffic-core"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+description = "Core domain types for WSL Traffic Monitor."
+
+[dependencies]
+serde.workspace = true
+thiserror.workspace = true
+time.workspace = true
+
+[lints]
+workspace = true

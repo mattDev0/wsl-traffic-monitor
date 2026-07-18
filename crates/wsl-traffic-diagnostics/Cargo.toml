@@ -1,0 +1,19 @@
+[package]
+name = "wsl-traffic-diagnostics"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+description = "Diagnostics report boundary for WSL Traffic Monitor."
+
+[dependencies]
+serde.workspace = true
+serde_json.workspace = true
+time.workspace = true
+wsl-traffic-core.workspace = true
+wsl-traffic-windows.workspace = true
+wsl-traffic-wsl.workspace = true
+
+[lints]
+workspace = true

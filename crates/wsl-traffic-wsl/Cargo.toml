@@ -1,0 +1,17 @@
+[package]
+name = "wsl-traffic-wsl"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+description = "WSL discovery and configuration boundary for WSL Traffic Monitor."
+
+[dependencies]
+serde.workspace = true
+thiserror.workspace = true
+toml.workspace = true
+wsl-traffic-core.workspace = true
+
+[lints]
+workspace = true

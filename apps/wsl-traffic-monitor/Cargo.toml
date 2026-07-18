@@ -1,0 +1,25 @@
+[package]
+name = "wsl-traffic-monitor-app"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+description = "Placeholder application entry point for WSL Traffic Monitor."
+
+[[bin]]
+name = "wsl-traffic-monitor"
+path = "src/main.rs"
+doc = false
+
+[dependencies]
+tracing.workspace = true
+tracing-subscriber.workspace = true
+wsl-traffic-core.workspace = true
+wsl-traffic-diagnostics.workspace = true
+wsl-traffic-monitor.workspace = true
+wsl-traffic-storage.workspace = true
+wsl-traffic-ui.workspace = true
+
+[lints]
+workspace = true

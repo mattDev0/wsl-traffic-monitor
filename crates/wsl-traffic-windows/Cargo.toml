@@ -1,0 +1,19 @@
+[package]
+name = "wsl-traffic-windows"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+description = "Windows platform boundary for WSL Traffic Monitor."
+
+[dependencies]
+thiserror.workspace = true
+tracing.workspace = true
+wsl-traffic-core.workspace = true
+
+[target.'cfg(windows)'.dependencies]
+windows = { workspace = true, features = ["Win32_NetworkManagement_IpHelper"] }
+
+[lints]
+workspace = true
