@@ -19,15 +19,33 @@ use windows::Win32::UI::WindowsAndMessaging::{
 use windows::core::{PCWSTR, w};
 use wsl_traffic_monitor::{NetworkProvider, WslTrafficMonitorService};
 
-fn format_bytes(bytes: f64) -> String {
-    if bytes >= 1024.0 * 1024.0 * 1024.0 {
-        format!("{:.2} GiB", bytes / (1024.0 * 1024.0 * 1024.0))
-    } else if bytes >= 1024.0 * 1024.0 {
-        format!("{:.2} MiB", bytes / (1024.0 * 1024.0))
-    } else if bytes >= 1024.0 {
-        format!("{:.2} KiB", bytes / 1024.0)
-    } else {
-        format!("{bytes:.0} B")
+use wsl_traffic_storage::SpeedUnit;
+
+fn format_speed(bytes_per_sec: f64, unit: SpeedUnit) -> String {
+    match unit {
+        SpeedUnit::Bytes => {
+            if bytes_per_sec >= 1024.0 * 1024.0 * 1024.0 {
+                format!("{:.2} GiB/s", bytes_per_sec / (1024.0 * 1024.0 * 1024.0))
+            } else if bytes_per_sec >= 1024.0 * 1024.0 {
+                format!("{:.2} MiB/s", bytes_per_sec / (1024.0 * 1024.0))
+            } else if bytes_per_sec >= 1024.0 {
+                format!("{:.2} KiB/s", bytes_per_sec / 1024.0)
+            } else {
+                format!("{bytes_per_sec:.0} B/s")
+            }
+        }
+        SpeedUnit::Bits => {
+            let bits_per_sec = bytes_per_sec * 8.0;
+            if bits_per_sec >= 1000.0 * 1000.0 * 1000.0 {
+                format!("{:.2} Gbps", bits_per_sec / (1000.0 * 1000.0 * 1000.0))
+            } else if bits_per_sec >= 1000.0 * 1000.0 {
+                format!("{:.2} Mbps", bits_per_sec / (1000.0 * 1000.0))
+            } else if bits_per_sec >= 1000.0 {
+                format!("{:.2} Kbps", bits_per_sec / 1000.0)
+            } else {
+                format!("{bits_per_sec:.0} bps")
+            }
+        }
     }
 }
 
@@ -52,6 +70,7 @@ trait TrayHandler {
 
 pub struct TrayStateImpl<P: NetworkProvider> {
     pub(crate) service: WslTrafficMonitorService<P>,
+    pub(crate) settings: wsl_traffic_storage::UserSettings,
 }
 
 impl<P: NetworkProvider> TrayHandler for TrayStateImpl<P> {
@@ -59,8 +78,8 @@ impl<P: NetworkProvider> TrayHandler for TrayStateImpl<P> {
         let snapshot = self.service.get_snapshot();
         let tip_text = format!(
             "WSL Network Traffic\nDown: {}\nUp: {}",
-            format_bytes(snapshot.download_speed),
-            format_bytes(snapshot.upload_speed)
+            format_speed(snapshot.download_speed, self.settings.speed_unit),
+            format_speed(snapshot.upload_speed, self.settings.speed_unit)
         );
         update_tray_icon_tip(hwnd, &tip_text);
     }
@@ -68,7 +87,7 @@ impl<P: NetworkProvider> TrayHandler for TrayStateImpl<P> {
     fn on_tray_icon(&mut self, hwnd: HWND, lparam: LPARAM) {
         let event = lparam.0 as u32;
         if event == windows::Win32::UI::WindowsAndMessaging::WM_RBUTTONUP {
-            show_context_menu(hwnd, &self.service);
+            show_context_menu(hwnd, &self.service, self.settings.speed_unit);
         }
     }
 
@@ -153,10 +172,14 @@ fn update_tray_icon_tip(hwnd: HWND, tip: &str) {
 }
 
 #[allow(unsafe_code)]
-fn show_context_menu<P: NetworkProvider>(hwnd: HWND, service: &WslTrafficMonitorService<P>) {
+fn show_context_menu<P: NetworkProvider>(
+    hwnd: HWND,
+    service: &WslTrafficMonitorService<P>,
+    unit: SpeedUnit,
+) {
     let snapshot = service.get_snapshot();
-    let download_str = format!("Download: {}/s", format_bytes(snapshot.download_speed));
-    let upload_str = format!("Upload: {}/s", format_bytes(snapshot.upload_speed));
+    let download_str = format!("Download: {}", format_speed(snapshot.download_speed, unit));
+    let upload_str = format!("Upload: {}", format_speed(snapshot.upload_speed, unit));
     let status_str = format!("Status: {:?}", snapshot.status);
 
     unsafe {
@@ -225,9 +248,12 @@ fn show_context_menu<P: NetworkProvider>(hwnd: HWND, service: &WslTrafficMonitor
 
 /// Start the Win32 message loop window and load the tray notification icon.
 #[allow(unsafe_code)]
-pub fn run_tray_ui<P: NetworkProvider>(service: WslTrafficMonitorService<P>) -> Result<(), String> {
+pub fn run_tray_ui<P: NetworkProvider>(
+    service: WslTrafficMonitorService<P>,
+    settings: wsl_traffic_storage::UserSettings,
+) -> Result<(), String> {
     TRAY_STATE.with(|state| {
-        *state.borrow_mut() = Some(Box::new(TrayStateImpl { service }));
+        *state.borrow_mut() = Some(Box::new(TrayStateImpl { service, settings }));
     });
 
     unsafe {

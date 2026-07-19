@@ -15,14 +15,16 @@ mod win_tray;
 #[allow(clippy::needless_pass_by_value)]
 pub fn run_ui<P: NetworkProvider>(
     service: wsl_traffic_monitor::WslTrafficMonitorService<P>,
+    settings: wsl_traffic_storage::UserSettings,
 ) -> Result<(), String> {
     #[cfg(windows)]
     {
-        win_tray::run_tray_ui(service)
+        win_tray::run_tray_ui(service, settings)
     }
     #[cfg(not(windows))]
     {
         let _ = service;
+        let _ = settings;
         println!("System tray UI is only supported on Windows.");
         Ok(())
     }
@@ -44,7 +46,8 @@ mod tests {
     #[test]
     fn test_win_tray_state_creation() {
         let service = wsl_traffic_monitor::WslTrafficMonitorService::new();
-        let handler = win_tray::TrayStateImpl { service };
+        let settings = wsl_traffic_storage::UserSettings::default();
+        let handler = win_tray::TrayStateImpl { service, settings };
         assert!(!handler.service.is_running());
     }
 }

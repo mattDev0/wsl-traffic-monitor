@@ -662,6 +662,7 @@ version = "0.1.0"
 dependencies = [
  "directories",
  "serde",
+ "serde_json",
  "thiserror",
  "time",
  "wsl-traffic-core",
@@ -676,6 +677,7 @@ dependencies = [
  "wsl-traffic-core",
  "wsl-traffic-diagnostics",
  "wsl-traffic-monitor",
+ "wsl-traffic-storage",
 ]
 
 [[package]]
