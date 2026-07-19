@@ -228,6 +228,8 @@ pub struct WslTrafficMonitor<P: NetworkProvider = SystemNetworkProvider> {
     last_time: Option<std::time::Instant>,
     state: MonitorState,
     networking_mode: String,
+    confidence: MeasurementConfidence,
+    last_error: Option<String>,
 }
 
 impl WslTrafficMonitor<SystemNetworkProvider> {
@@ -247,6 +249,8 @@ impl WslTrafficMonitor<SystemNetworkProvider> {
             last_time: None,
             state: MonitorState::Active,
             networking_mode: "nat".to_string(),
+            confidence: MeasurementConfidence::High,
+            last_error: None,
         }
     }
 }
@@ -267,6 +271,8 @@ impl<P: NetworkProvider> WslTrafficMonitor<P> {
             last_time: None,
             state: MonitorState::Disconnected,
             networking_mode: "nat".to_string(),
+            confidence: MeasurementConfidence::Unsupported,
+            last_error: None,
         }
     }
 
@@ -280,6 +286,18 @@ impl<P: NetworkProvider> WslTrafficMonitor<P> {
     #[must_use]
     pub fn state(&self) -> MonitorState {
         self.state
+    }
+
+    /// Retrieve the current measurement confidence level.
+    #[must_use]
+    pub fn confidence(&self) -> MeasurementConfidence {
+        self.confidence
+    }
+
+    /// Retrieve the last error message, if any.
+    #[must_use]
+    pub fn last_error(&self) -> Option<String> {
+        self.last_error.clone()
     }
 
     /// Perform a single tick check, using the current system monotonic clock.
@@ -322,6 +340,9 @@ impl<P: NetworkProvider> WslTrafficMonitor<P> {
             self.monitored_luid = None;
             self.last_counters = None;
             self.last_time = None;
+            self.last_error = Some(format!(
+                "Failed to query interface counters for LUID {luid}"
+            ));
 
             return TrafficSample {
                 upload_bytes_per_sec: 0.0,
@@ -329,6 +350,7 @@ impl<P: NetworkProvider> WslTrafficMonitor<P> {
                 timestamp,
             };
         };
+        self.last_error = None;
 
         let Some(last_counters) = self.last_counters else {
             // First sample establishing the baseline
@@ -400,22 +422,52 @@ impl<P: NetworkProvider> WslTrafficMonitor<P> {
         }
     }
 
+    #[allow(clippy::if_not_else)]
     fn redetect(&mut self, now: std::time::Instant) -> Option<u64> {
         let wsl_info = self.provider.detect_wsl();
+        if !wsl_info.is_installed {
+            self.confidence = MeasurementConfidence::Unsupported;
+            self.last_error = Some("WSL is not installed".to_string());
+            return None;
+        }
         self.networking_mode.clone_from(&wsl_info.networking_mode);
         let docker_info = self.provider.detect_docker(&wsl_info);
 
-        if let Ok(adapters) = self.provider.get_adapters() {
-            let classifications = crate::classify_adapters(&adapters, &wsl_info, &docker_info);
-            if let Some(best) = classifications.first() {
-                if best.confidence != MeasurementConfidence::Unsupported {
-                    let luid = best.adapter_luid;
-                    if let Ok(counters) = self.provider.get_interface_counters(luid) {
-                        self.last_counters = Some(counters);
-                        self.last_time = Some(now);
-                        return Some(luid);
+        match self.provider.get_adapters() {
+            Ok(adapters) => {
+                let classifications = crate::classify_adapters(&adapters, &wsl_info, &docker_info);
+                if let Some(best) = classifications.first() {
+                    if best.confidence != MeasurementConfidence::Unsupported {
+                        let luid = best.adapter_luid;
+                        match self.provider.get_interface_counters(luid) {
+                            Ok(counters) => {
+                                self.last_counters = Some(counters);
+                                self.last_time = Some(now);
+                                self.confidence = best.confidence;
+                                self.last_error = None;
+                                return Some(luid);
+                            }
+                            Err(e) => {
+                                self.confidence = best.confidence;
+                                self.last_error = Some(format!(
+                                    "Failed to get counters for redetected LUID {luid}: {e}"
+                                ));
+                            }
+                        }
+                    } else {
+                        self.confidence = MeasurementConfidence::Unsupported;
+                        self.last_error = Some(
+                            "No supported network adapters identified for monitoring".to_string(),
+                        );
                     }
+                } else {
+                    self.confidence = MeasurementConfidence::Unsupported;
+                    self.last_error = Some("No network adapters found".to_string());
                 }
+            }
+            Err(e) => {
+                self.confidence = MeasurementConfidence::Unsupported;
+                self.last_error = Some(format!("Failed to enumerate network adapters: {e}"));
             }
         }
         None
@@ -469,6 +521,127 @@ impl ActiveMonitor {
 impl Drop for ActiveMonitor {
     fn drop(&mut self) {
         self.stop();
+    }
+}
+
+/// A thread-safe, queryable snapshot of the active monitoring status and rates.
+#[derive(Clone, Debug, PartialEq)]
+pub struct MonitorStateSnapshot {
+    /// Current upload speed in bytes per second.
+    pub upload_speed: f64,
+    /// Current download speed in bytes per second.
+    pub download_speed: f64,
+    /// Current status (Active or Disconnected).
+    pub status: MonitorState,
+    /// Current measurement confidence.
+    pub confidence: MeasurementConfidence,
+    /// The last error message, if in an error/disconnected state.
+    pub error_state: Option<String>,
+}
+
+/// A thread-safe production monitor service that schedules background polling and exposes status/rates.
+pub struct WslTrafficMonitorService<P: NetworkProvider = SystemNetworkProvider> {
+    monitor: std::sync::Arc<std::sync::Mutex<WslTrafficMonitor<P>>>,
+    state: std::sync::Arc<std::sync::RwLock<MonitorStateSnapshot>>,
+    active_monitor: Option<ActiveMonitor>,
+}
+
+impl WslTrafficMonitorService<SystemNetworkProvider> {
+    /// Create a new monitoring service with the host OS network provider.
+    #[must_use]
+    pub fn new() -> Self {
+        Self::new_with_provider(SystemNetworkProvider)
+    }
+}
+
+impl Default for WslTrafficMonitorService<SystemNetworkProvider> {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+#[allow(clippy::missing_panics_doc)]
+impl<P: NetworkProvider> WslTrafficMonitorService<P> {
+    /// Create a new monitoring service with a custom network provider (e.g. for mock testing).
+    pub fn new_with_provider(provider: P) -> Self {
+        let initial_snapshot = MonitorStateSnapshot {
+            upload_speed: 0.0,
+            download_speed: 0.0,
+            status: MonitorState::Disconnected,
+            confidence: MeasurementConfidence::Unsupported,
+            error_state: None,
+        };
+
+        Self {
+            monitor: std::sync::Arc::new(std::sync::Mutex::new(
+                WslTrafficMonitor::new_with_provider(provider),
+            )),
+            state: std::sync::Arc::new(std::sync::RwLock::new(initial_snapshot)),
+            active_monitor: None,
+        }
+    }
+
+    /// Start background polling at the specified interval.
+    ///
+    /// # Errors
+    /// Returns an error if the monitor service is already running.
+    pub fn start(&mut self, interval: std::time::Duration) -> Result<(), String> {
+        if self.active_monitor.is_some() {
+            return Err("Monitor service is already running".to_string());
+        }
+
+        let monitor = self.monitor.clone();
+        let state = self.state.clone();
+        let (stop_tx, stop_rx) = std::sync::mpsc::channel();
+
+        let handle = std::thread::spawn(move || {
+            loop {
+                if stop_rx.recv_timeout(interval).is_ok() {
+                    break;
+                }
+                let mut m = monitor.lock().unwrap();
+                let sample = m.tick();
+                let status = m.state();
+                let confidence = m.confidence();
+                let error_state = m.last_error();
+
+                if let Ok(mut s) = state.write() {
+                    *s = MonitorStateSnapshot {
+                        upload_speed: sample.upload_bytes_per_sec,
+                        download_speed: sample.download_bytes_per_sec,
+                        status,
+                        confidence,
+                        error_state,
+                    };
+                }
+            }
+        });
+
+        self.active_monitor = Some(ActiveMonitor {
+            stop_tx,
+            thread_handle: Some(handle),
+        });
+
+        Ok(())
+    }
+
+    /// Stop background polling.
+    pub fn stop(&mut self) {
+        if let Some(mut active) = self.active_monitor.take() {
+            active.stop();
+        }
+    }
+
+    /// Retrieve the current snapshot of the monitoring metrics and status.
+    #[must_use]
+    pub fn get_snapshot(&self) -> MonitorStateSnapshot {
+        self.state.read().unwrap().clone()
+    }
+
+    /// Retrieve the current status of the service (whether background polling is active).
+    #[must_use]
+    pub fn is_running(&self) -> bool {
+        self.active_monitor.is_some()
     }
 }
 
@@ -991,5 +1164,91 @@ mod tests {
         let sample3 = monitor.tick_at(base_instant + std::time::Duration::from_secs(3));
         assert_eq!(sample3.download_bytes_per_sec, 1000.0);
         assert_eq!(sample3.upload_bytes_per_sec, 2000.0);
+    }
+
+    #[test]
+    fn test_monitor_service_lifecycle() {
+        let wsl_info = WslInfo {
+            is_installed: true,
+            wsl_version: Some("2.0.0".to_string()),
+            kernel_version: None,
+            distributions: vec![],
+            networking_mode: "nat".to_string(),
+            wslconfig_parsed: None,
+        };
+        let docker_info = DockerInfo {
+            is_installed: false,
+            has_docker_desktop_distro: false,
+            has_docker_desktop_data_distro: false,
+            running_processes: vec![],
+        };
+        let adapter = AdapterInfo {
+            luid: 100,
+            if_index: 1,
+            guid: "guid".to_string(),
+            alias: "alias".to_string(),
+            friendly_name: "vEthernet (WSL)".to_string(),
+            description: "Hyper-V Virtual Ethernet Adapter".to_string(),
+            if_type: 6,
+            oper_status: 1,
+            mac_address: "mac".to_string(),
+            mtu: 1500,
+            link_speed: 100_000,
+            ipv4_addresses: vec![],
+            ipv6_addresses: vec![],
+            bytes_sent: 1000,
+            bytes_recv: 2000,
+            packets_sent: 0,
+            packets_recv: 0,
+        };
+
+        let mut counters_map = std::collections::HashMap::new();
+        counters_map.insert(
+            100,
+            wsl_traffic_windows::RawInterfaceCounters {
+                bytes_sent: 1000,
+                bytes_recv: 2000,
+                packets_sent: 0,
+                packets_recv: 0,
+            },
+        );
+
+        let provider = MockNetworkProvider {
+            adapters: std::sync::Mutex::new(vec![adapter]),
+            counters: std::sync::Mutex::new(counters_map),
+            wsl_info: std::sync::Mutex::new(wsl_info),
+            docker_info: std::sync::Mutex::new(docker_info),
+        };
+
+        let mut service = WslTrafficMonitorService::new_with_provider(provider);
+        assert!(!service.is_running());
+
+        // Check initial state
+        let snapshot = service.get_snapshot();
+        assert_eq!(snapshot.upload_speed, 0.0);
+        assert_eq!(snapshot.download_speed, 0.0);
+        assert_eq!(snapshot.status, MonitorState::Disconnected);
+
+        // Start service
+        let res = service.start(std::time::Duration::from_millis(50));
+        assert!(res.is_ok());
+        assert!(service.is_running());
+
+        // Try to start again - should fail
+        let res_twice = service.start(std::time::Duration::from_millis(50));
+        assert!(res_twice.is_err());
+
+        // Sleep to let background thread tick
+        std::thread::sleep(std::time::Duration::from_millis(150));
+
+        // After ticking, it should have performed discovery, set baseline, and transition to Active
+        let snapshot2 = service.get_snapshot();
+        assert_eq!(snapshot2.status, MonitorState::Active);
+        assert_eq!(snapshot2.confidence, MeasurementConfidence::High);
+        assert!(snapshot2.error_state.is_none());
+
+        // Stop the service
+        service.stop();
+        assert!(!service.is_running());
     }
 }
