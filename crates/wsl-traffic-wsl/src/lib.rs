@@ -171,15 +171,14 @@ pub fn detect_wsl() -> WslInfo {
                 let _ = tx.send(res);
             });
 
-            let output = match rx.recv_timeout(Duration::from_secs(5)) {
-                Ok(Ok(out)) => Some(out),
-                _ => {
-                    // Timeout or error: forcibly kill the child process
-                    let _ = Command::new("taskkill.exe")
-                        .args(["/F", "/PID", &child_id.to_string()])
-                        .output();
-                    None
-                }
+            let output = if let Ok(Ok(out)) = rx.recv_timeout(Duration::from_secs(5)) {
+                Some(out)
+            } else {
+                // Timeout or error: forcibly kill the child process
+                let _ = Command::new("taskkill.exe")
+                    .args(["/F", "/PID", &child_id.to_string()])
+                    .output();
+                None
             }?;
 
             if output.status.success() {
@@ -190,14 +189,12 @@ pub fn detect_wsl() -> WslInfo {
         };
 
         let ver_output = run_cmd(&["--version"]);
-        let (wsl_version, kernel_version) = ver_output
-            .map(|out| parse_wsl_version_output(&out))
-            .unwrap_or((None, None));
+        let (wsl_version, kernel_version) =
+            ver_output.map_or((None, None), |out| parse_wsl_version_output(&out));
 
         let list_output = run_cmd(&["-l", "-v"]);
-        let distributions = list_output
-            .map(|out| parse_wsl_list_output(&out))
-            .unwrap_or_else(|| {
+        let distributions = list_output.map_or_else(
+            || {
                 // Fallback to registry if command fails
                 wsl_traffic_windows::get_wsl_distros_from_registry()
                     .into_iter()
@@ -207,7 +204,9 @@ pub fn detect_wsl() -> WslInfo {
                         is_running: false, // Registry doesn't know running status
                     })
                     .collect()
-            });
+            },
+            |out| parse_wsl_list_output(&out),
+        );
 
         // WSL is installed if registry contains distributions or wsl.exe executed successfully
         let is_installed = !distributions.is_empty() || wsl_version.is_some();
