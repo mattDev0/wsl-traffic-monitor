@@ -8,7 +8,7 @@ All notable changes to this project will be documented in this file.
 - Implemented **Counter Sampler** (Phase 1).
 - Added `get_interface_counters` in `wsl-traffic-windows` to poll raw counters of a single adapter by LUID using `GetIfEntry2`.
 - Added stateful `WslTrafficMonitor` managing transition between `Active` and `Disconnected` states.
-- Implemented automatic redetection of WSL interfaces upon distribution restart or interface recreation.
+- Implemented automatic interface reclassification to dynamically transition between adapters and update confidence levels when topology changes, adapters appear/disappear, or WSL starts/stops.
 - Implemented counter reset and sleep/resume protection preventing delta spikes.
 - Added a mockable `NetworkProvider` trait for 100% deterministic test coverage of all connection, reset, and rate scenarios.
 - Added a drop-safe background worker `ActiveMonitor` to run the sampling loop.
