@@ -147,6 +147,8 @@ pub struct DiagnosticsReport {
     pub classifications: Vec<CandidateClassification>,
     /// Recommendation for which adapter to monitor
     pub recommendation: String,
+    /// Advanced networking and experimental diagnostics (Phase 3)
+    pub advanced_diagnostics: AdvancedNetworkingDiagnostics,
 }
 
 /// A calculated sample representing bandwidth usage over a measurement interval.
@@ -158,6 +160,24 @@ pub struct TrafficSample {
     pub download_bytes_per_sec: f64,
     /// ISO-8601/RFC-3339 formatted UTC timestamp of the sample
     pub timestamp: String,
+}
+
+/// Advanced networking and experimental diagnostics for evaluation (Phase 3).
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[allow(clippy::struct_excessive_bools)]
+pub struct AdvancedNetworkingDiagnostics {
+    /// Whether mirrored mode was explicitly parsed from wslconfig
+    pub wslconfig_mirrored: bool,
+    /// Whether virtioproxy was explicitly parsed from wslconfig
+    pub wslconfig_virtioproxy: bool,
+    /// Whether DNS tunneling is enabled in wslconfig
+    pub dns_tunneling_enabled: bool,
+    /// Whether the host has access to run ETW network tracing (checks privileges/admin status)
+    pub etw_tracing_accessible: bool,
+    /// Whether the host has access to query WFP compartments/API (checks user permissions)
+    pub wfp_accessible: bool,
+    /// Additional evaluation details/findings for diagnostics
+    pub evaluation_notes: String,
 }
 
 #[cfg(test)]

@@ -245,3 +245,38 @@ pub fn is_docker_desktop_installed() -> bool {
         true
     }
 }
+
+/// Check if the current process is running with administrative (elevated) privileges.
+#[must_use]
+#[allow(unsafe_code)]
+pub fn is_elevated() -> bool {
+    #[cfg(windows)]
+    {
+        use windows::Win32::System::Registry::{
+            HKEY_LOCAL_MACHINE, KEY_WRITE, RegCloseKey, RegOpenKeyExW,
+        };
+        use windows::core::PCWSTR;
+
+        unsafe {
+            let mut key = windows::Win32::System::Registry::HKEY::default();
+            let subkey: Vec<u16> = "Software".encode_utf16().chain(Some(0)).collect();
+            let result = RegOpenKeyExW(
+                HKEY_LOCAL_MACHINE,
+                PCWSTR(subkey.as_ptr()),
+                Some(0),
+                KEY_WRITE,
+                &mut key,
+            );
+            if result.is_ok() {
+                let _ = RegCloseKey(key);
+                true
+            } else {
+                false
+            }
+        }
+    }
+    #[cfg(not(windows))]
+    {
+        false
+    }
+}

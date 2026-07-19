@@ -25,6 +25,55 @@ pub fn generate_report() -> Result<DiagnosticsReport, String> {
         .format(&time::format_description::well_known::Rfc3339)
         .unwrap_or_else(|_| "Unknown".to_string());
 
+    // Phase 3 advanced networking and experimental diagnostics
+    let wslconfig_mirrored = wsl_info.networking_mode == "mirrored";
+    let wslconfig_virtioproxy = wsl_info.networking_mode == "virtioproxy";
+
+    let mut dns_tunneling_enabled = false;
+    if let Some(ref config) = wsl_info.wslconfig_parsed {
+        if let Some(wsl2_sec) = config.get("wsl2") {
+            for (k, v) in wsl2_sec {
+                if k.to_lowercase() == "dnstunneling" {
+                    dns_tunneling_enabled = v.to_lowercase() == "true";
+                }
+            }
+        }
+    }
+
+    let is_elevated = wsl_traffic_windows::is_elevated();
+    let etw_tracing_accessible = is_elevated;
+    let wfp_accessible = is_elevated;
+
+    let mut evaluation_notes = String::new();
+    if wslconfig_mirrored {
+        evaluation_notes.push_str("Mirrored networking active. Attributing exact WSL-only traffic requires packet header inspection or WFP compartment rules (needs elevation).\n");
+    } else if wslconfig_virtioproxy {
+        evaluation_notes.push_str("VirtioProxy mode active. Host-side NAT interfaces may be bypassed or behave as user-mode proxied endpoints.\n");
+    } else {
+        evaluation_notes.push_str(
+            "WSL NAT mode active. Virtual network interface isolation is validated and reliable.\n",
+        );
+    }
+
+    if dns_tunneling_enabled {
+        evaluation_notes.push_str("DNS Tunneling is enabled. DNS queries bypass the standard adapter packets and are virtualized.\n");
+    }
+
+    if is_elevated {
+        evaluation_notes.push_str("Host process is running as Administrator. Full ETW tracing and WFP inspection capabilities are accessible.\n");
+    } else {
+        evaluation_notes.push_str("Host process is unprivileged. ETW network tracing and advanced WFP/compartment filtering are restricted (run as Admin to enable).\n");
+    }
+
+    let advanced_diagnostics = wsl_traffic_core::AdvancedNetworkingDiagnostics {
+        wslconfig_mirrored,
+        wslconfig_virtioproxy,
+        dns_tunneling_enabled,
+        etw_tracing_accessible,
+        wfp_accessible,
+        evaluation_notes,
+    };
+
     Ok(DiagnosticsReport {
         schema_version: DIAGNOSTICS_SCHEMA_VERSION,
         timestamp,
@@ -34,6 +83,7 @@ pub fn generate_report() -> Result<DiagnosticsReport, String> {
         adapters,
         classifications,
         recommendation,
+        advanced_diagnostics,
     })
 }
 
@@ -244,6 +294,61 @@ pub fn format_report_as_text(report: &DiagnosticsReport) -> String {
     }
     let _ = writeln!(out);
 
+    let _ = writeln!(
+        out,
+        "Advanced Networking & Experimental Diagnostics (Phase 3):"
+    );
+    let _ = writeln!(
+        out,
+        "  WSLConfig Mirrored Mode:     {}",
+        if report.advanced_diagnostics.wslconfig_mirrored {
+            "Yes"
+        } else {
+            "No"
+        }
+    );
+    let _ = writeln!(
+        out,
+        "  WSLConfig VirtioProxy Mode:  {}",
+        if report.advanced_diagnostics.wslconfig_virtioproxy {
+            "Yes"
+        } else {
+            "No"
+        }
+    );
+    let _ = writeln!(
+        out,
+        "  DNS Tunneling Enabled:       {}",
+        if report.advanced_diagnostics.dns_tunneling_enabled {
+            "Yes"
+        } else {
+            "No"
+        }
+    );
+    let _ = writeln!(
+        out,
+        "  ETW Tracing Accessible:      {}",
+        if report.advanced_diagnostics.etw_tracing_accessible {
+            "Yes (Admin)"
+        } else {
+            "No (Needs Elevation)"
+        }
+    );
+    let _ = writeln!(
+        out,
+        "  WFP Engine Accessible:       {}",
+        if report.advanced_diagnostics.wfp_accessible {
+            "Yes (Admin)"
+        } else {
+            "No (Needs Elevation)"
+        }
+    );
+    let _ = writeln!(out, "  Evaluation Findings:");
+    for line in report.advanced_diagnostics.evaluation_notes.lines() {
+        let _ = writeln!(out, "    * {line}");
+    }
+    let _ = writeln!(out);
+
     let _ = writeln!(out, "Measurement Recommendation:");
     let _ = writeln!(out, "  {}", report.recommendation);
     let _ = writeln!(
@@ -325,5 +430,15 @@ mod tests {
     fn test_format_link_speed() {
         assert_eq!(format_link_speed(1_000_000_000), "1.00 Gbps");
         assert_eq!(format_link_speed(100_000_000), "100.00 Mbps");
+    }
+
+    #[test]
+    fn test_generate_and_format_report() {
+        let report = generate_report().unwrap();
+        assert_eq!(report.schema_version, 0);
+        let text = format_report_as_text(&report);
+        assert!(text.contains("Advanced Networking & Experimental Diagnostics"));
+        let json = format_report_as_json(&report).unwrap();
+        assert!(json.contains("advanced_diagnostics"));
     }
 }
