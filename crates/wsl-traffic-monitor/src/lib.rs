@@ -230,6 +230,8 @@ pub struct WslTrafficMonitor<P: NetworkProvider = SystemNetworkProvider> {
     networking_mode: String,
     confidence: MeasurementConfidence,
     last_error: Option<String>,
+    ticks_since_reclassify: usize,
+    reclassify_interval_ticks: usize,
 }
 
 impl WslTrafficMonitor<SystemNetworkProvider> {
@@ -251,6 +253,8 @@ impl WslTrafficMonitor<SystemNetworkProvider> {
             networking_mode: "nat".to_string(),
             confidence: MeasurementConfidence::High,
             last_error: None,
+            ticks_since_reclassify: 0,
+            reclassify_interval_ticks: 10,
         }
     }
 }
@@ -273,6 +277,8 @@ impl<P: NetworkProvider> WslTrafficMonitor<P> {
             networking_mode: "nat".to_string(),
             confidence: MeasurementConfidence::Unsupported,
             last_error: None,
+            ticks_since_reclassify: 0,
+            reclassify_interval_ticks: 10,
         }
     }
 
@@ -300,24 +306,52 @@ impl<P: NetworkProvider> WslTrafficMonitor<P> {
         self.last_error.clone()
     }
 
+    /// Set the number of ticks between automatic reclassification checks.
+    pub fn set_reclassify_interval_ticks(&mut self, ticks: usize) {
+        self.reclassify_interval_ticks = ticks;
+    }
+
     /// Perform a single tick check, using the current system monotonic clock.
     pub fn tick(&mut self) -> TrafficSample {
         self.tick_at(std::time::Instant::now())
     }
 
     /// Perform a single tick check, passing an explicit monotonic time (crucial for time-delta tests).
-    #[allow(clippy::cast_precision_loss)]
+    #[allow(clippy::cast_precision_loss, clippy::too_many_lines)]
     pub fn tick_at(&mut self, now: std::time::Instant) -> TrafficSample {
         let timestamp = time::OffsetDateTime::now_utc()
             .format(&time::format_description::well_known::Rfc3339)
             .unwrap_or_else(|_| "Unknown".to_string());
 
-        // Check if we need to detect or redetect the target interface
-        if self.monitored_luid.is_none() || self.state == MonitorState::Disconnected {
+        // Increment ticks since reclassification
+        self.ticks_since_reclassify += 1;
+
+        // Check if we need to detect or redetect the target interface, or if reclassification is due
+        let need_reclassify = self.monitored_luid.is_none()
+            || self.state == MonitorState::Disconnected
+            || self.ticks_since_reclassify >= self.reclassify_interval_ticks;
+
+        if need_reclassify {
+            self.ticks_since_reclassify = 0;
             if let Some(luid) = self.redetect(now) {
-                self.monitored_luid = Some(luid);
-                self.state = MonitorState::Active;
+                if Some(luid) != self.monitored_luid {
+                    // We switched to a new adapter!
+                    self.monitored_luid = Some(luid);
+                    self.state = MonitorState::Active;
+                    // First tick on new adapter reports 0.0 to establish baseline
+                    return TrafficSample {
+                        upload_bytes_per_sec: 0.0,
+                        download_bytes_per_sec: 0.0,
+                        timestamp,
+                    };
+                }
             } else {
+                // No supported interface found
+                self.state = MonitorState::Disconnected;
+                self.monitored_luid = None;
+                self.last_counters = None;
+                self.last_time = None;
+
                 return TrafficSample {
                     upload_bytes_per_sec: 0.0,
                     download_bytes_per_sec: 0.0,
@@ -441,8 +475,11 @@ impl<P: NetworkProvider> WslTrafficMonitor<P> {
                         let luid = best.adapter_luid;
                         match self.provider.get_interface_counters(luid) {
                             Ok(counters) => {
-                                self.last_counters = Some(counters);
-                                self.last_time = Some(now);
+                                if Some(luid) != self.monitored_luid || self.last_counters.is_none()
+                                {
+                                    self.last_counters = Some(counters);
+                                    self.last_time = Some(now);
+                                }
                                 self.confidence = best.confidence;
                                 self.last_error = None;
                                 return Some(luid);
@@ -1250,5 +1287,163 @@ mod tests {
         // Stop the service
         service.stop();
         assert!(!service.is_running());
+    }
+
+    #[test]
+    #[allow(clippy::too_many_lines)]
+    fn test_monitor_automatic_reclassification() {
+        let base_instant = std::time::Instant::now();
+        let wsl_info = WslInfo {
+            is_installed: true,
+            wsl_version: Some("2.0.0".to_string()),
+            kernel_version: None,
+            distributions: vec![],
+            networking_mode: "nat".to_string(),
+            wslconfig_parsed: None,
+        };
+        let docker_info = DockerInfo {
+            is_installed: false,
+            has_docker_desktop_distro: false,
+            has_docker_desktop_data_distro: false,
+            running_processes: vec![],
+        };
+
+        // Initially we have adapter 100
+        let adapter100 = AdapterInfo {
+            luid: 100,
+            if_index: 1,
+            guid: "guid100".to_string(),
+            alias: "alias".to_string(),
+            friendly_name: "vEthernet (WSL)".to_string(),
+            description: "Hyper-V Virtual Ethernet Adapter".to_string(),
+            if_type: 6,
+            oper_status: 1,
+            mac_address: "mac100".to_string(),
+            mtu: 1500,
+            link_speed: 100_000,
+            ipv4_addresses: vec![],
+            ipv6_addresses: vec![],
+            bytes_sent: 1000,
+            bytes_recv: 2000,
+            packets_sent: 0,
+            packets_recv: 0,
+        };
+
+        let mut counters_map = std::collections::HashMap::new();
+        counters_map.insert(
+            100,
+            wsl_traffic_windows::RawInterfaceCounters {
+                bytes_sent: 1000,
+                bytes_recv: 2000,
+                packets_sent: 0,
+                packets_recv: 0,
+            },
+        );
+
+        let provider = MockNetworkProvider {
+            adapters: std::sync::Mutex::new(vec![adapter100]),
+            counters: std::sync::Mutex::new(counters_map),
+            wsl_info: std::sync::Mutex::new(wsl_info),
+            docker_info: std::sync::Mutex::new(docker_info),
+        };
+
+        let mut monitor = WslTrafficMonitor::new_with_provider(provider);
+        // Set reclassify interval to 3 ticks
+        monitor.set_reclassify_interval_ticks(3);
+
+        // Tick 1: trigger reclassification (interval starts at 0, tick increments it to 1.
+        // Since monitored_luid is None, it runs redetect immediately!
+        // This binds to adapter 100, establishes baseline, and returns 0.0 rates.
+        let sample1 = monitor.tick_at(base_instant);
+        assert_eq!(monitor.monitored_luid(), Some(100));
+        assert_eq!(sample1.download_bytes_per_sec, 0.0);
+
+        // Tick 2: ticks_since_reclassify becomes 1. Since 1 < 3, reclassification does not trigger.
+        // It performs a normal query on adapter 100, preserving and calculating delta rates.
+        {
+            let mut c = monitor.provider.counters.lock().unwrap();
+            c.insert(
+                100,
+                wsl_traffic_windows::RawInterfaceCounters {
+                    bytes_sent: 2000, // +1000 OutOctets (download in NAT)
+                    bytes_recv: 4000, // +2000 InOctets (upload in NAT)
+                    packets_sent: 0,
+                    packets_recv: 0,
+                },
+            );
+        }
+        let sample2 = monitor.tick_at(base_instant + std::time::Duration::from_secs(1));
+        // Verify rate calculation is preserved and calculated correctly!
+        assert_eq!(sample2.download_bytes_per_sec, 1000.0);
+        assert_eq!(sample2.upload_bytes_per_sec, 2000.0);
+
+        // Now change topology: adapter 200 becomes the active adapter
+        let adapter200 = AdapterInfo {
+            luid: 200,
+            if_index: 2,
+            guid: "guid200".to_string(),
+            alias: "alias".to_string(),
+            friendly_name: "vEthernet (WSL)".to_string(),
+            description: "Hyper-V Virtual Ethernet Adapter".to_string(),
+            if_type: 6,
+            oper_status: 1,
+            mac_address: "mac200".to_string(),
+            mtu: 1500,
+            link_speed: 100_000,
+            ipv4_addresses: vec![],
+            ipv6_addresses: vec![],
+            bytes_sent: 5000,
+            bytes_recv: 6000,
+            packets_sent: 0,
+            packets_recv: 0,
+        };
+        {
+            let mut a = monitor.provider.adapters.lock().unwrap();
+            *a = vec![adapter200];
+            let mut c = monitor.provider.counters.lock().unwrap();
+            c.clear();
+            c.insert(
+                200,
+                wsl_traffic_windows::RawInterfaceCounters {
+                    bytes_sent: 5000,
+                    bytes_recv: 6000,
+                    packets_sent: 0,
+                    packets_recv: 0,
+                },
+            );
+        }
+
+        // Tick 3: ticks_since_reclassify becomes 1. Since 1 < 2, it does NOT trigger reclassify.
+        // It tries to query the old LUID 100.
+        // But adapter 100 is gone, so the query on 100 fails!
+        // This transitions state to Disconnected.
+        let sample3 = monitor.tick_at(base_instant + std::time::Duration::from_secs(2));
+        assert_eq!(monitor.state(), MonitorState::Disconnected);
+        assert_eq!(sample3.download_bytes_per_sec, 0.0);
+
+        // Tick 4: monitor is Disconnected, so reclassification / redetect triggers immediately!
+        // It finds adapter 200, binds to it, sets baseline, and returns 0.0.
+        let sample4 = monitor.tick_at(base_instant + std::time::Duration::from_secs(3));
+        assert_eq!(monitor.state(), MonitorState::Active);
+        assert_eq!(monitor.monitored_luid(), Some(200));
+        assert_eq!(sample4.download_bytes_per_sec, 0.0);
+
+        // Tick 5: ticks_since_reclassify becomes 1. Since 1 < 2, it does not reclassify.
+        // Normal delta calculations on 200.
+        {
+            let mut c = monitor.provider.counters.lock().unwrap();
+            c.insert(
+                200,
+                wsl_traffic_windows::RawInterfaceCounters {
+                    bytes_sent: 6000, // +1000
+                    bytes_recv: 8000, // +2000
+                    packets_sent: 0,
+                    packets_recv: 0,
+                },
+            );
+        }
+        let sample5 = monitor.tick_at(base_instant + std::time::Duration::from_secs(4));
+        assert_eq!(sample5.download_bytes_per_sec, 1000.0);
+        assert_eq!(sample5.upload_bytes_per_sec, 2000.0);
     }
 }
