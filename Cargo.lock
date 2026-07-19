@@ -636,6 +636,7 @@ name = "wsl-traffic-monitor"
 version = "0.1.0"
 dependencies = [
  "thiserror",
+ "time",
  "tracing",
  "wsl-traffic-core",
  "wsl-traffic-windows",

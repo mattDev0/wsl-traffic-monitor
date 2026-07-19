@@ -3,7 +3,7 @@
 //! Evaluates candidate network interfaces for WSL traffic monitoring suitability.
 
 use wsl_traffic_core::{
-    AdapterInfo, CandidateClassification, DockerInfo, MeasurementConfidence, WslInfo,
+    AdapterInfo, CandidateClassification, DockerInfo, MeasurementConfidence, TrafficSample, WslInfo,
 };
 
 /// Query Docker Desktop installation and process status.
@@ -166,7 +166,314 @@ pub fn generate_recommendation(
     }
 }
 
+/// The current connectivity state of the monitoring engine.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum MonitorState {
+    /// Actively polling and computing deltas on the WSL interface.
+    Active,
+    /// Interface is missing or disconnected; attempting to reconnect.
+    Disconnected,
+}
+
+/// Abstract provider for retrieving OS-level network information (for testing and dependency injection).
+pub trait NetworkProvider: Send + 'static {
+    /// Query all network adapters on the host.
+    ///
+    /// # Errors
+    /// Returns an error if querying host adapters fails.
+    fn get_adapters(&self) -> Result<Vec<AdapterInfo>, String>;
+    /// Query raw counters for a specific network interface.
+    ///
+    /// # Errors
+    /// Returns an error if the interface is not found or querying fails.
+    fn get_interface_counters(
+        &self,
+        luid: u64,
+    ) -> Result<wsl_traffic_windows::RawInterfaceCounters, String>;
+    /// Detect the WSL installation state.
+    fn detect_wsl(&self) -> WslInfo;
+    /// Query Docker Desktop integration state.
+    fn detect_docker(&self, wsl_info: &WslInfo) -> DockerInfo;
+}
+
+/// Concrete production network provider wrapping real system calls.
+pub struct SystemNetworkProvider;
+
+impl NetworkProvider for SystemNetworkProvider {
+    fn get_adapters(&self) -> Result<Vec<AdapterInfo>, String> {
+        wsl_traffic_windows::get_adapters()
+    }
+
+    fn get_interface_counters(
+        &self,
+        luid: u64,
+    ) -> Result<wsl_traffic_windows::RawInterfaceCounters, String> {
+        wsl_traffic_windows::get_interface_counters(luid)
+    }
+
+    fn detect_wsl(&self) -> WslInfo {
+        wsl_traffic_wsl::detect_wsl()
+    }
+
+    fn detect_docker(&self, wsl_info: &WslInfo) -> DockerInfo {
+        detect_docker(wsl_info)
+    }
+}
+
+/// Continuous monitoring engine that tracks a target adapter LUID and produces normalized traffic samples.
+pub struct WslTrafficMonitor<P: NetworkProvider = SystemNetworkProvider> {
+    provider: P,
+    monitored_luid: Option<u64>,
+    last_counters: Option<wsl_traffic_windows::RawInterfaceCounters>,
+    last_time: Option<std::time::Instant>,
+    state: MonitorState,
+    networking_mode: String,
+}
+
+impl WslTrafficMonitor<SystemNetworkProvider> {
+    /// Create a new monitor using the host OS network provider.
+    #[must_use]
+    pub fn new() -> Self {
+        Self::new_with_provider(SystemNetworkProvider)
+    }
+
+    /// Create a new monitor with a pre-selected adapter LUID.
+    #[must_use]
+    pub fn new_with_luid(luid: u64) -> Self {
+        Self {
+            provider: SystemNetworkProvider,
+            monitored_luid: Some(luid),
+            last_counters: None,
+            last_time: None,
+            state: MonitorState::Active,
+            networking_mode: "nat".to_string(),
+        }
+    }
+}
+
+impl Default for WslTrafficMonitor<SystemNetworkProvider> {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl<P: NetworkProvider> WslTrafficMonitor<P> {
+    /// Create a new monitor with a custom provider (e.g. for mock testing).
+    pub fn new_with_provider(provider: P) -> Self {
+        Self {
+            provider,
+            monitored_luid: None,
+            last_counters: None,
+            last_time: None,
+            state: MonitorState::Disconnected,
+            networking_mode: "nat".to_string(),
+        }
+    }
+
+    /// Retrieve the current monitored interface LUID, if any.
+    #[must_use]
+    pub fn monitored_luid(&self) -> Option<u64> {
+        self.monitored_luid
+    }
+
+    /// Retrieve the current monitor status state.
+    #[must_use]
+    pub fn state(&self) -> MonitorState {
+        self.state
+    }
+
+    /// Perform a single tick check, using the current system monotonic clock.
+    pub fn tick(&mut self) -> TrafficSample {
+        self.tick_at(std::time::Instant::now())
+    }
+
+    /// Perform a single tick check, passing an explicit monotonic time (crucial for time-delta tests).
+    #[allow(clippy::cast_precision_loss)]
+    pub fn tick_at(&mut self, now: std::time::Instant) -> TrafficSample {
+        let timestamp = time::OffsetDateTime::now_utc()
+            .format(&time::format_description::well_known::Rfc3339)
+            .unwrap_or_else(|_| "Unknown".to_string());
+
+        // Check if we need to detect or redetect the target interface
+        if self.monitored_luid.is_none() || self.state == MonitorState::Disconnected {
+            if let Some(luid) = self.redetect(now) {
+                self.monitored_luid = Some(luid);
+                self.state = MonitorState::Active;
+            } else {
+                return TrafficSample {
+                    upload_bytes_per_sec: 0.0,
+                    download_bytes_per_sec: 0.0,
+                    timestamp,
+                };
+            }
+        }
+
+        let Some(luid) = self.monitored_luid else {
+            return TrafficSample {
+                upload_bytes_per_sec: 0.0,
+                download_bytes_per_sec: 0.0,
+                timestamp,
+            };
+        };
+
+        let Ok(new_counters) = self.provider.get_interface_counters(luid) else {
+            // Interface became unreachable (WSL shutdown or adapter destruction)
+            self.state = MonitorState::Disconnected;
+            self.monitored_luid = None;
+            self.last_counters = None;
+            self.last_time = None;
+
+            return TrafficSample {
+                upload_bytes_per_sec: 0.0,
+                download_bytes_per_sec: 0.0,
+                timestamp,
+            };
+        };
+
+        let Some(last_counters) = self.last_counters else {
+            // First sample establishing the baseline
+            self.last_counters = Some(new_counters);
+            self.last_time = Some(now);
+            return TrafficSample {
+                upload_bytes_per_sec: 0.0,
+                download_bytes_per_sec: 0.0,
+                timestamp,
+            };
+        };
+
+        let last_time = self.last_time.unwrap_or(now);
+        let duration = now.duration_since(last_time);
+        let duration_secs = duration.as_secs_f64();
+
+        // 1. Detect sleep/resume or extremely long delay (> 5 seconds)
+        if duration_secs > 5.0 {
+            self.last_counters = Some(new_counters);
+            self.last_time = Some(now);
+            return TrafficSample {
+                upload_bytes_per_sec: 0.0,
+                download_bytes_per_sec: 0.0,
+                timestamp,
+            };
+        }
+
+        // 2. Detect counter reset (negative deltas)
+        if new_counters.bytes_sent < last_counters.bytes_sent
+            || new_counters.bytes_recv < last_counters.bytes_recv
+        {
+            self.last_counters = Some(new_counters);
+            self.last_time = Some(now);
+            return TrafficSample {
+                upload_bytes_per_sec: 0.0,
+                download_bytes_per_sec: 0.0,
+                timestamp,
+            };
+        }
+
+        // 3. Compute rates
+        let bytes_sent_delta = new_counters.bytes_sent - last_counters.bytes_sent;
+        let bytes_recv_delta = new_counters.bytes_recv - last_counters.bytes_recv;
+
+        let (upload_rate, download_rate) = if duration_secs > 0.0 {
+            let sent_rate = bytes_sent_delta as f64 / duration_secs;
+            let recv_rate = bytes_recv_delta as f64 / duration_secs;
+
+            if self.networking_mode == "mirrored" {
+                // Mirrored mode: sharing host physical interface
+                // Host sent = Upload, Host recv = Download
+                (sent_rate, recv_rate)
+            } else {
+                // NAT mode: virtual interface (inverted directions)
+                // Host sent = Download, Host recv = Upload
+                (recv_rate, sent_rate)
+            }
+        } else {
+            (0.0, 0.0)
+        };
+
+        self.last_counters = Some(new_counters);
+        self.last_time = Some(now);
+
+        TrafficSample {
+            upload_bytes_per_sec: upload_rate,
+            download_bytes_per_sec: download_rate,
+            timestamp,
+        }
+    }
+
+    fn redetect(&mut self, now: std::time::Instant) -> Option<u64> {
+        let wsl_info = self.provider.detect_wsl();
+        self.networking_mode.clone_from(&wsl_info.networking_mode);
+        let docker_info = self.provider.detect_docker(&wsl_info);
+
+        if let Ok(adapters) = self.provider.get_adapters() {
+            let classifications = crate::classify_adapters(&adapters, &wsl_info, &docker_info);
+            if let Some(best) = classifications.first() {
+                if best.confidence != MeasurementConfidence::Unsupported {
+                    let luid = best.adapter_luid;
+                    if let Ok(counters) = self.provider.get_interface_counters(luid) {
+                        self.last_counters = Some(counters);
+                        self.last_time = Some(now);
+                        return Some(luid);
+                    }
+                }
+            }
+        }
+        None
+    }
+
+    /// Spin up a background thread that periodically polls the sampler.
+    ///
+    /// The returned `ActiveMonitor` acts as a guard; dropping it halts the polling thread.
+    pub fn start_background<F>(
+        mut self,
+        interval: std::time::Duration,
+        mut callback: F,
+    ) -> ActiveMonitor
+    where
+        F: FnMut(TrafficSample) + Send + 'static,
+    {
+        let (stop_tx, stop_rx) = std::sync::mpsc::channel();
+        let handle = std::thread::spawn(move || {
+            loop {
+                if stop_rx.recv_timeout(interval).is_ok() {
+                    break;
+                }
+                let sample = self.tick();
+                callback(sample);
+            }
+        });
+
+        ActiveMonitor {
+            stop_tx,
+            thread_handle: Some(handle),
+        }
+    }
+}
+
+/// A handle to a running background monitor. HALTs the thread when dropped.
+pub struct ActiveMonitor {
+    stop_tx: std::sync::mpsc::Sender<()>,
+    thread_handle: Option<std::thread::JoinHandle<()>>,
+}
+
+impl ActiveMonitor {
+    /// Signal the background thread to stop, and block until it joins.
+    pub fn stop(&mut self) {
+        let _ = self.stop_tx.send(());
+        if let Some(handle) = self.thread_handle.take() {
+            let _ = handle.join();
+        }
+    }
+}
+
+impl Drop for ActiveMonitor {
+    fn drop(&mut self) {
+        self.stop();
+    }
+}
+
 #[cfg(test)]
+#[allow(clippy::float_cmp)]
 mod tests {
     use super::*;
     use wsl_traffic_core::{AdapterInfo, WslDistroInfo};
@@ -250,5 +557,439 @@ mod tests {
         assert_eq!(classified.len(), 1);
         assert_eq!(classified[0].confidence, MeasurementConfidence::Medium);
         assert!(classified[0].explanation.contains("Docker"));
+    }
+
+    // --- SAMPLER & RESET TESTS ---
+
+    struct MockNetworkProvider {
+        adapters: std::sync::Mutex<Vec<AdapterInfo>>,
+        counters: std::sync::Mutex<
+            std::collections::HashMap<u64, wsl_traffic_windows::RawInterfaceCounters>,
+        >,
+        wsl_info: std::sync::Mutex<WslInfo>,
+        docker_info: std::sync::Mutex<DockerInfo>,
+    }
+
+    impl NetworkProvider for MockNetworkProvider {
+        fn get_adapters(&self) -> Result<Vec<AdapterInfo>, String> {
+            Ok(self.adapters.lock().unwrap().clone())
+        }
+
+        fn get_interface_counters(
+            &self,
+            luid: u64,
+        ) -> Result<wsl_traffic_windows::RawInterfaceCounters, String> {
+            let counters_map = self.counters.lock().unwrap();
+            if let Some(c) = counters_map.get(&luid) {
+                Ok(*c)
+            } else {
+                Err("LUID not found".to_string())
+            }
+        }
+
+        fn detect_wsl(&self) -> WslInfo {
+            self.wsl_info.lock().unwrap().clone()
+        }
+
+        fn detect_docker(&self, _wsl_info: &WslInfo) -> DockerInfo {
+            self.docker_info.lock().unwrap().clone()
+        }
+    }
+
+    #[test]
+    fn test_monitor_normal_tick_nat_mode() {
+        let base_instant = std::time::Instant::now();
+        let wsl_info = WslInfo {
+            is_installed: true,
+            wsl_version: Some("2.0.0".to_string()),
+            kernel_version: None,
+            distributions: vec![],
+            networking_mode: "nat".to_string(),
+            wslconfig_parsed: None,
+        };
+        let docker_info = DockerInfo {
+            is_installed: false,
+            has_docker_desktop_distro: false,
+            has_docker_desktop_data_distro: false,
+            running_processes: vec![],
+        };
+        let adapter = AdapterInfo {
+            luid: 100,
+            if_index: 1,
+            guid: "guid".to_string(),
+            alias: "alias".to_string(),
+            friendly_name: "vEthernet (WSL)".to_string(),
+            description: "Hyper-V Virtual Ethernet Adapter".to_string(),
+            if_type: 6,
+            oper_status: 1,
+            mac_address: "mac".to_string(),
+            mtu: 1500,
+            link_speed: 100_000,
+            ipv4_addresses: vec![],
+            ipv6_addresses: vec![],
+            bytes_sent: 1000,
+            bytes_recv: 2000,
+            packets_sent: 0,
+            packets_recv: 0,
+        };
+
+        let mut counters_map = std::collections::HashMap::new();
+        counters_map.insert(
+            100,
+            wsl_traffic_windows::RawInterfaceCounters {
+                bytes_sent: 1000,
+                bytes_recv: 2000,
+                packets_sent: 0,
+                packets_recv: 0,
+            },
+        );
+
+        let provider = MockNetworkProvider {
+            adapters: std::sync::Mutex::new(vec![adapter]),
+            counters: std::sync::Mutex::new(counters_map),
+            wsl_info: std::sync::Mutex::new(wsl_info),
+            docker_info: std::sync::Mutex::new(docker_info),
+        };
+
+        let mut monitor = WslTrafficMonitor::new_with_provider(provider);
+
+        // First tick: establishing baseline
+        let sample1 = monitor.tick_at(base_instant);
+        assert_eq!(sample1.upload_bytes_per_sec, 0.0);
+        assert_eq!(sample1.download_bytes_per_sec, 0.0);
+        assert_eq!(monitor.state(), MonitorState::Active);
+        assert_eq!(monitor.monitored_luid(), Some(100));
+
+        // Update mock counters: 1 second elapsed, bytes_sent +5000, bytes_recv +10000
+        {
+            let mut c = monitor.provider.counters.lock().unwrap();
+            c.insert(
+                100,
+                wsl_traffic_windows::RawInterfaceCounters {
+                    bytes_sent: 6000,  // OutOctets = Download in NAT mode
+                    bytes_recv: 12000, // InOctets = Upload in NAT mode
+                    packets_sent: 0,
+                    packets_recv: 0,
+                },
+            );
+        }
+
+        // Second tick: 1 second later
+        let sample2 = monitor.tick_at(base_instant + std::time::Duration::from_secs(1));
+        // NAT mode: OutOctets (sent) = download, InOctets (recv) = upload
+        assert_eq!(sample2.download_bytes_per_sec, 5000.0);
+        assert_eq!(sample2.upload_bytes_per_sec, 10000.0);
+    }
+
+    #[test]
+    fn test_monitor_counter_reset() {
+        let base_instant = std::time::Instant::now();
+        let wsl_info = WslInfo {
+            is_installed: true,
+            wsl_version: Some("2.0.0".to_string()),
+            kernel_version: None,
+            distributions: vec![],
+            networking_mode: "nat".to_string(),
+            wslconfig_parsed: None,
+        };
+        let docker_info = DockerInfo {
+            is_installed: false,
+            has_docker_desktop_distro: false,
+            has_docker_desktop_data_distro: false,
+            running_processes: vec![],
+        };
+        let adapter = AdapterInfo {
+            luid: 100,
+            if_index: 1,
+            guid: "guid".to_string(),
+            alias: "alias".to_string(),
+            friendly_name: "vEthernet (WSL)".to_string(),
+            description: "Hyper-V Virtual Ethernet Adapter".to_string(),
+            if_type: 6,
+            oper_status: 1,
+            mac_address: "mac".to_string(),
+            mtu: 1500,
+            link_speed: 100_000,
+            ipv4_addresses: vec![],
+            ipv6_addresses: vec![],
+            bytes_sent: 1000,
+            bytes_recv: 2000,
+            packets_sent: 0,
+            packets_recv: 0,
+        };
+
+        let mut counters_map = std::collections::HashMap::new();
+        counters_map.insert(
+            100,
+            wsl_traffic_windows::RawInterfaceCounters {
+                bytes_sent: 1000,
+                bytes_recv: 2000,
+                packets_sent: 0,
+                packets_recv: 0,
+            },
+        );
+
+        let provider = MockNetworkProvider {
+            adapters: std::sync::Mutex::new(vec![adapter]),
+            counters: std::sync::Mutex::new(counters_map),
+            wsl_info: std::sync::Mutex::new(wsl_info),
+            docker_info: std::sync::Mutex::new(docker_info),
+        };
+
+        let mut monitor = WslTrafficMonitor::new_with_provider(provider);
+
+        // Establish baseline
+        let _ = monitor.tick_at(base_instant);
+
+        // Counter reset happens: values drop below baseline
+        {
+            let mut c = monitor.provider.counters.lock().unwrap();
+            c.insert(
+                100,
+                wsl_traffic_windows::RawInterfaceCounters {
+                    bytes_sent: 500,  // < 1000
+                    bytes_recv: 1000, // < 2000
+                    packets_sent: 0,
+                    packets_recv: 0,
+                },
+            );
+        }
+
+        // Tick after reset
+        let sample = monitor.tick_at(base_instant + std::time::Duration::from_secs(1));
+        // Speed must be reported as 0.0, NOT negative or a huge spike
+        assert_eq!(sample.download_bytes_per_sec, 0.0);
+        assert_eq!(sample.upload_bytes_per_sec, 0.0);
+
+        // Verify that the baseline was updated to the new lower values
+        {
+            let mut c = monitor.provider.counters.lock().unwrap();
+            c.insert(
+                100,
+                wsl_traffic_windows::RawInterfaceCounters {
+                    bytes_sent: 1500, // diff = +1000
+                    bytes_recv: 3000, // diff = +2000
+                    packets_sent: 0,
+                    packets_recv: 0,
+                },
+            );
+        }
+
+        let sample2 = monitor.tick_at(base_instant + std::time::Duration::from_secs(2));
+        assert_eq!(sample2.download_bytes_per_sec, 1000.0);
+        assert_eq!(sample2.upload_bytes_per_sec, 2000.0);
+    }
+
+    #[test]
+    fn test_monitor_sleep_resume() {
+        let base_instant = std::time::Instant::now();
+        let wsl_info = WslInfo {
+            is_installed: true,
+            wsl_version: Some("2.0.0".to_string()),
+            kernel_version: None,
+            distributions: vec![],
+            networking_mode: "nat".to_string(),
+            wslconfig_parsed: None,
+        };
+        let docker_info = DockerInfo {
+            is_installed: false,
+            has_docker_desktop_distro: false,
+            has_docker_desktop_data_distro: false,
+            running_processes: vec![],
+        };
+        let adapter = AdapterInfo {
+            luid: 100,
+            if_index: 1,
+            guid: "guid".to_string(),
+            alias: "alias".to_string(),
+            friendly_name: "vEthernet (WSL)".to_string(),
+            description: "Hyper-V Virtual Ethernet Adapter".to_string(),
+            if_type: 6,
+            oper_status: 1,
+            mac_address: "mac".to_string(),
+            mtu: 1500,
+            link_speed: 100_000,
+            ipv4_addresses: vec![],
+            ipv6_addresses: vec![],
+            bytes_sent: 1000,
+            bytes_recv: 2000,
+            packets_sent: 0,
+            packets_recv: 0,
+        };
+
+        let mut counters_map = std::collections::HashMap::new();
+        counters_map.insert(
+            100,
+            wsl_traffic_windows::RawInterfaceCounters {
+                bytes_sent: 1000,
+                bytes_recv: 2000,
+                packets_sent: 0,
+                packets_recv: 0,
+            },
+        );
+
+        let provider = MockNetworkProvider {
+            adapters: std::sync::Mutex::new(vec![adapter]),
+            counters: std::sync::Mutex::new(counters_map),
+            wsl_info: std::sync::Mutex::new(wsl_info),
+            docker_info: std::sync::Mutex::new(docker_info),
+        };
+
+        let mut monitor = WslTrafficMonitor::new_with_provider(provider);
+
+        // Establish baseline
+        let _ = monitor.tick_at(base_instant);
+
+        // System goes to sleep and wakes up 10 seconds later
+        {
+            let mut c = monitor.provider.counters.lock().unwrap();
+            c.insert(
+                100,
+                wsl_traffic_windows::RawInterfaceCounters {
+                    bytes_sent: 50000,
+                    bytes_recv: 80000,
+                    packets_sent: 0,
+                    packets_recv: 0,
+                },
+            );
+        }
+
+        let sample = monitor.tick_at(base_instant + std::time::Duration::from_secs(10));
+        // Due to sleep/resume interval > 5.0 seconds, we reset baseline and report 0.0
+        assert_eq!(sample.download_bytes_per_sec, 0.0);
+        assert_eq!(sample.upload_bytes_per_sec, 0.0);
+    }
+
+    #[test]
+    #[allow(clippy::too_many_lines)]
+    fn test_monitor_wsl_shutdown_and_restart() {
+        let base_instant = std::time::Instant::now();
+        let wsl_info = WslInfo {
+            is_installed: true,
+            wsl_version: Some("2.0.0".to_string()),
+            kernel_version: None,
+            distributions: vec![],
+            networking_mode: "nat".to_string(),
+            wslconfig_parsed: None,
+        };
+        let docker_info = DockerInfo {
+            is_installed: false,
+            has_docker_desktop_distro: false,
+            has_docker_desktop_data_distro: false,
+            running_processes: vec![],
+        };
+        let adapter = AdapterInfo {
+            luid: 100,
+            if_index: 1,
+            guid: "guid".to_string(),
+            alias: "alias".to_string(),
+            friendly_name: "vEthernet (WSL)".to_string(),
+            description: "Hyper-V Virtual Ethernet Adapter".to_string(),
+            if_type: 6,
+            oper_status: 1,
+            mac_address: "mac".to_string(),
+            mtu: 1500,
+            link_speed: 100_000,
+            ipv4_addresses: vec![],
+            ipv6_addresses: vec![],
+            bytes_sent: 1000,
+            bytes_recv: 2000,
+            packets_sent: 0,
+            packets_recv: 0,
+        };
+
+        let mut counters_map = std::collections::HashMap::new();
+        counters_map.insert(
+            100,
+            wsl_traffic_windows::RawInterfaceCounters {
+                bytes_sent: 1000,
+                bytes_recv: 2000,
+                packets_sent: 0,
+                packets_recv: 0,
+            },
+        );
+
+        let provider = MockNetworkProvider {
+            adapters: std::sync::Mutex::new(vec![adapter]),
+            counters: std::sync::Mutex::new(counters_map),
+            wsl_info: std::sync::Mutex::new(wsl_info),
+            docker_info: std::sync::Mutex::new(docker_info),
+        };
+
+        let mut monitor = WslTrafficMonitor::new_with_provider(provider);
+
+        // Establish baseline
+        let _ = monitor.tick_at(base_instant);
+
+        // WSL shutdown: adapter counters query fails
+        {
+            let mut c = monitor.provider.counters.lock().unwrap();
+            c.remove(&100);
+        }
+
+        let sample1 = monitor.tick_at(base_instant + std::time::Duration::from_secs(1));
+        assert_eq!(monitor.state(), MonitorState::Disconnected);
+        assert_eq!(sample1.download_bytes_per_sec, 0.0);
+
+        // WSL restart: new adapter is created with different LUID (200) and starts with fresh counters
+        let new_adapter = AdapterInfo {
+            luid: 200,
+            if_index: 4,
+            guid: "new_guid".to_string(),
+            alias: "alias".to_string(),
+            friendly_name: "vEthernet (WSL)".to_string(),
+            description: "Hyper-V Virtual Ethernet Adapter".to_string(),
+            if_type: 6,
+            oper_status: 1,
+            mac_address: "mac".to_string(),
+            mtu: 1500,
+            link_speed: 100_000,
+            ipv4_addresses: vec![],
+            ipv6_addresses: vec![],
+            bytes_sent: 50,
+            bytes_recv: 80,
+            packets_sent: 0,
+            packets_recv: 0,
+        };
+
+        // Update provider with new state
+        {
+            let mut a = monitor.provider.adapters.lock().unwrap();
+            *a = vec![new_adapter];
+            let mut c = monitor.provider.counters.lock().unwrap();
+            c.insert(
+                200,
+                wsl_traffic_windows::RawInterfaceCounters {
+                    bytes_sent: 50,
+                    bytes_recv: 80,
+                    packets_sent: 0,
+                    packets_recv: 0,
+                },
+            );
+        }
+
+        // Next tick: will perform redetection, find new adapter, set baseline and return zero rates
+        let sample2 = monitor.tick_at(base_instant + std::time::Duration::from_secs(2));
+        assert_eq!(monitor.state(), MonitorState::Active);
+        assert_eq!(monitor.monitored_luid(), Some(200));
+        assert_eq!(sample2.download_bytes_per_sec, 0.0);
+
+        // Subsequent tick: normal delta calculation on the new adapter
+        {
+            let mut c = monitor.provider.counters.lock().unwrap();
+            c.insert(
+                200,
+                wsl_traffic_windows::RawInterfaceCounters {
+                    bytes_sent: 1050, // diff = 1000
+                    bytes_recv: 2080, // diff = 2000
+                    packets_sent: 0,
+                    packets_recv: 0,
+                },
+            );
+        }
+
+        let sample3 = monitor.tick_at(base_instant + std::time::Duration::from_secs(3));
+        assert_eq!(sample3.download_bytes_per_sec, 1000.0);
+        assert_eq!(sample3.upload_bytes_per_sec, 2000.0);
     }
 }
