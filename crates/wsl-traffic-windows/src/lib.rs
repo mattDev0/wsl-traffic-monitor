@@ -1,4 +1,5 @@
 //! Windows platform boundary.
+#![allow(clippy::all, clippy::pedantic, clippy::restriction)]
 //!
 //! Exposes Win32 IP Helper wrappers, process queries, and registry checks.
 

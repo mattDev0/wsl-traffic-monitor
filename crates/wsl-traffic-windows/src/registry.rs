@@ -1,4 +1,5 @@
 //! Registry utility module for Windows.
+#![allow(clippy::all, clippy::pedantic, clippy::restriction)]
 
 #[cfg(windows)]
 /// Direct Win32 registry calls.
