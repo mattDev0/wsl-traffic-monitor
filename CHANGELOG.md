@@ -12,6 +12,9 @@ All notable changes to this project will be documented in this file.
 - Implemented counter reset and sleep/resume protection preventing delta spikes.
 - Added a mockable `NetworkProvider` trait for 100% deterministic test coverage of all connection, reset, and rate scenarios.
 - Added a drop-safe background worker `ActiveMonitor` to run the sampling loop.
+- Added thread-safe `WslTrafficMonitorService` running the counter sampler in a background thread and exposing real-time query snapshots.
+- Added detailed error message tracking and measurement confidence levels dynamically throughout discovery and query operations.
+- Added service lifecycle unit tests validating background ticks, snapshot queries, and double-start prevention.
 
 ## [0.1.0] - 2026-07-18
 
