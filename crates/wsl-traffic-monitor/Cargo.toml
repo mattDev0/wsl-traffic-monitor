@@ -13,6 +13,7 @@ tracing.workspace = true
 wsl-traffic-core.workspace = true
 wsl-traffic-windows.workspace = true
 wsl-traffic-wsl.workspace = true
+wsl-traffic-storage.workspace = true
 time.workspace = true
 
 [lints]

@@ -9,6 +9,7 @@ description = "History storage boundary for WSL Traffic Monitor."
 
 [dependencies]
 directories.workspace = true
+redb.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true

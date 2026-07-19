@@ -34,6 +34,7 @@ pub fn detect_docker(wsl_info: &WslInfo) -> DockerInfo {
 
 /// Score and classify every adapter to evaluate its suitability as a WSL traffic source.
 #[must_use]
+#[allow(clippy::too_many_lines)]
 pub fn classify_adapters(
     adapters: &[AdapterInfo],
     wsl_info: &WslInfo,
@@ -45,6 +46,19 @@ pub fn classify_adapters(
         let name_lower = adapter.friendly_name.to_lowercase();
         let desc_lower = adapter.description.to_lowercase();
         let alias_lower = adapter.alias.to_lowercase();
+
+        let has_wsl_subnet_ip = adapter.ipv4_addresses.iter().any(|ip| {
+            if ip.starts_with("192.168.") || ip.starts_with("10.") {
+                return true;
+            }
+            if ip.starts_with("172.") {
+                if let Some(second_octet) = ip.split('.').nth(1).and_then(|s| s.parse::<u8>().ok())
+                {
+                    return (16..=31).contains(&second_octet);
+                }
+            }
+            false
+        });
 
         // Classify and score adapter
         let (score, confidence, explanation) = if name_lower.contains("docker")
@@ -75,12 +89,26 @@ pub fn classify_adapters(
                     } else {
                         (MeasurementConfidence::High, "Hyper-V Virtual Ethernet adapter explicitly named 'WSL' and is UP. High confidence NAT isolation".to_string())
                     };
-                    (90, conf, expl)
+                    let bonus = if has_wsl_subnet_ip { 5 } else { 0 };
+                    (90 + bonus, conf, expl)
                 } else {
-                    (70, MeasurementConfidence::Medium, "Hyper-V Virtual Ethernet adapter explicitly named 'WSL' but is currently offline/down".to_string())
+                    let bonus = if has_wsl_subnet_ip { 5 } else { 0 };
+                    (70 + bonus, MeasurementConfidence::Medium, "Hyper-V Virtual Ethernet adapter explicitly named 'WSL' but is currently offline/down".to_string())
                 }
             } else {
-                (50, MeasurementConfidence::Medium, "Hyper-V Virtual Ethernet adapter, possibly used by virtual machines, but not explicitly named 'WSL'".to_string())
+                let (score, conf, expl) = if has_wsl_subnet_ip {
+                    let (c, e) = if docker_info.is_installed
+                        || !docker_info.running_processes.is_empty()
+                    {
+                        (MeasurementConfidence::Medium, "Hyper-V adapter without 'WSL' in name, but has WSL private subnet IP. Confidence is Medium because Docker Desktop is installed/running".to_string())
+                    } else {
+                        (MeasurementConfidence::High, "Hyper-V adapter without 'WSL' in name, but has WSL private subnet IP. High confidence NAT isolation".to_string())
+                    };
+                    (65, c, e)
+                } else {
+                    (50, MeasurementConfidence::Medium, "Hyper-V Virtual Ethernet adapter, possibly used by virtual machines, but not explicitly named 'WSL'".to_string())
+                };
+                (score, conf, expl)
             }
         } else if wsl_info.networking_mode == "mirrored" {
             let is_physical = adapter.if_type == 6 || adapter.if_type == 71;
@@ -651,7 +679,16 @@ impl<P: NetworkProvider> WslTrafficMonitorService<P> {
                         error_state,
                     };
                 }
+
+                // Record usage history
+                #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+                let up_bytes = (sample.upload_bytes_per_sec * interval.as_secs_f64()) as u64;
+                #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+                let down_bytes = (sample.download_bytes_per_sec * interval.as_secs_f64()) as u64;
+                let _ = wsl_traffic_storage::record_usage(up_bytes, down_bytes);
             }
+            // Flush any remaining history when loop exits
+            let _ = wsl_traffic_storage::flush_history();
         });
 
         self.active_monitor = Some(ActiveMonitor {
@@ -667,6 +704,8 @@ impl<P: NetworkProvider> WslTrafficMonitorService<P> {
         if let Some(mut active) = self.active_monitor.take() {
             active.stop();
         }
+        // Ensure data is written on stop
+        let _ = wsl_traffic_storage::flush_history();
     }
 
     /// Retrieve the current snapshot of the monitoring metrics and status.
@@ -767,6 +806,47 @@ mod tests {
         assert_eq!(classified.len(), 1);
         assert_eq!(classified[0].confidence, MeasurementConfidence::Medium);
         assert!(classified[0].explanation.contains("Docker"));
+    }
+
+    #[test]
+    fn test_classify_adapters_no_wsl_name_but_wsl_ip() {
+        let wsl_info = WslInfo {
+            is_installed: true,
+            wsl_version: Some("2.0.0".to_string()),
+            kernel_version: None,
+            distributions: vec![],
+            networking_mode: "nat".to_string(),
+            wslconfig_parsed: None,
+        };
+        let docker_info = DockerInfo {
+            is_installed: false,
+            has_docker_desktop_distro: false,
+            has_docker_desktop_data_distro: false,
+            running_processes: vec![],
+        };
+        let adapters = vec![AdapterInfo {
+            luid: 1,
+            if_index: 1,
+            guid: "guid".to_string(),
+            alias: "alias".to_string(),
+            friendly_name: "vEthernet (Default Switch)".to_string(),
+            description: "Hyper-V Virtual Ethernet Adapter".to_string(),
+            if_type: 6,
+            oper_status: 1,
+            mac_address: "mac".to_string(),
+            mtu: 1500,
+            link_speed: 100_000,
+            ipv4_addresses: vec!["172.25.80.1".to_string()],
+            ipv6_addresses: vec![],
+            bytes_sent: 0,
+            bytes_recv: 0,
+            packets_sent: 0,
+            packets_recv: 0,
+        }];
+        let classified = classify_adapters(&adapters, &wsl_info, &docker_info);
+        assert_eq!(classified.len(), 1);
+        assert_eq!(classified[0].confidence, MeasurementConfidence::High);
+        assert_eq!(classified[0].score, 65);
     }
 
     // --- SAMPLER & RESET TESTS ---
@@ -1204,7 +1284,17 @@ mod tests {
     }
 
     #[test]
+    #[allow(unsafe_code)]
     fn test_monitor_service_lifecycle() {
+        let temp_dir = std::env::temp_dir();
+        let test_db_path = temp_dir.join(format!("test_history_{}.redb", std::process::id()));
+        if test_db_path.exists() {
+            let _ = std::fs::remove_file(&test_db_path);
+        }
+        unsafe {
+            std::env::set_var("WSL_TRAFFIC_HISTORY_DB", &test_db_path);
+        }
+
         let wsl_info = WslInfo {
             is_installed: true,
             wsl_version: Some("2.0.0".to_string()),
@@ -1284,9 +1374,25 @@ mod tests {
         assert_eq!(snapshot2.confidence, MeasurementConfidence::High);
         assert!(snapshot2.error_state.is_none());
 
-        // Stop the service
+        // Stop the service (which flushes history)
+        let _ = wsl_traffic_storage::record_usage(1000, 2000);
         service.stop();
         assert!(!service.is_running());
+
+        // Verify history was written!
+        let hourly = wsl_traffic_storage::get_hourly_history(10).unwrap();
+        assert!(!hourly.is_empty());
+        let (key, up, down) = &hourly[0];
+        assert!(key.starts_with("hourly:"));
+        assert_eq!(*up, 1000);
+        assert_eq!(*down, 2000);
+
+        unsafe {
+            std::env::remove_var("WSL_TRAFFIC_HISTORY_DB");
+        }
+        if test_db_path.exists() {
+            let _ = std::fs::remove_file(&test_db_path);
+        }
     }
 
     #[test]

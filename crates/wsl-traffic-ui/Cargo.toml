@@ -13,6 +13,7 @@ wsl-traffic-core.workspace = true
 wsl-traffic-monitor.workspace = true
 wsl-traffic-diagnostics.workspace = true
 wsl-traffic-storage.workspace = true
+directories.workspace = true
 
 [target.'cfg(windows)'.dependencies]
 windows = { workspace = true, features = [

@@ -55,6 +55,7 @@ const ID_TRAY_STATUS: usize = 1001;
 const ID_TRAY_DOWNLOAD: usize = 1002;
 const ID_TRAY_UPLOAD: usize = 1003;
 const ID_TRAY_EXIT: usize = 1004;
+const ID_TRAY_DIAGNOSTICS: usize = 1005;
 const TRAY_TIMER_ID: usize = 1;
 
 thread_local! {
@@ -99,6 +100,8 @@ impl<P: NetworkProvider> TrayHandler for TrayStateImpl<P> {
             unsafe {
                 let _ = DestroyWindow(hwnd);
             }
+        } else if control_id == ID_TRAY_DIAGNOSTICS {
+            export_diagnostics(hwnd);
         }
     }
 
@@ -225,6 +228,19 @@ fn show_context_menu<P: NetworkProvider>(
 
         let _ = AppendMenuW(hmenu, MF_SEPARATOR, 0, PCWSTR::null());
 
+        let diag_wide: Vec<u16> = "Export Diagnostics..."
+            .encode_utf16()
+            .chain(Some(0))
+            .collect();
+        let _ = AppendMenuW(
+            hmenu,
+            MF_STRING,
+            ID_TRAY_DIAGNOSTICS,
+            PCWSTR(diag_wide.as_ptr()),
+        );
+
+        let _ = AppendMenuW(hmenu, MF_SEPARATOR, 0, PCWSTR::null());
+
         let exit_wide: Vec<u16> = "Exit".encode_utf16().chain(Some(0)).collect();
         let _ = AppendMenuW(hmenu, MF_STRING, ID_TRAY_EXIT, PCWSTR(exit_wide.as_ptr()));
 
@@ -342,4 +358,60 @@ pub fn run_tray_ui<P: NetworkProvider>(
     });
 
     Ok(())
+}
+
+fn export_diagnostics(hwnd: HWND) {
+    match wsl_traffic_diagnostics::generate_report() {
+        Ok(report) => {
+            let text = wsl_traffic_diagnostics::format_report_as_text(&report);
+            if let Some(proj) =
+                directories::ProjectDirs::from("com", "wsl-traffic-monitor", "WSL Traffic Monitor")
+            {
+                let path = proj.config_dir().join("diagnostics_report.txt");
+                if let Some(parent) = path.parent() {
+                    let _ = std::fs::create_dir_all(parent);
+                }
+                if std::fs::write(&path, &text).is_ok() {
+                    let msg = format!(
+                        "Diagnostics report exported successfully to:\n{}",
+                        path.to_string_lossy()
+                    );
+                    show_message_box(hwnd, &msg, "Diagnostics Exported", false);
+                    return;
+                }
+            }
+            show_message_box(
+                hwnd,
+                "Failed to write diagnostics report file.",
+                "Export Error",
+                true,
+            );
+        }
+        Err(e) => {
+            let msg = format!("Failed to generate diagnostics report:\n{e}");
+            show_message_box(hwnd, &msg, "Export Error", true);
+        }
+    }
+}
+
+#[allow(unsafe_code)]
+fn show_message_box(hwnd: HWND, message: &str, title: &str, is_error: bool) {
+    use windows::Win32::UI::WindowsAndMessaging::{
+        MB_ICONERROR, MB_ICONINFORMATION, MB_OK, MessageBoxW,
+    };
+    let msg_wide: Vec<u16> = message.encode_utf16().chain(Some(0)).collect();
+    let title_wide: Vec<u16> = title.encode_utf16().chain(Some(0)).collect();
+    let flags = if is_error {
+        MB_ICONERROR
+    } else {
+        MB_ICONINFORMATION
+    } | MB_OK;
+    unsafe {
+        let _ = MessageBoxW(
+            Some(hwnd),
+            PCWSTR(msg_wide.as_ptr()),
+            PCWSTR(title_wide.as_ptr()),
+            flags,
+        );
+    }
 }
