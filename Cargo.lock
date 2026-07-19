@@ -615,6 +615,7 @@ name = "wsl-traffic-agent-protocol"
 version = "0.1.0"
 dependencies = [
  "serde",
+ "serde_json",
  "wsl-traffic-core",
 ]
 
@@ -638,6 +639,15 @@ dependencies = [
  "wsl-traffic-monitor",
  "wsl-traffic-windows",
  "wsl-traffic-wsl",
+]
+
+[[package]]
+name = "wsl-traffic-helper"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
+ "wsl-traffic-agent-protocol",
 ]
 
 [[package]]
