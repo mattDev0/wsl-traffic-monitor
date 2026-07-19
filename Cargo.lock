@@ -674,6 +674,7 @@ dependencies = [
  "wsl-traffic-monitor",
  "wsl-traffic-storage",
  "wsl-traffic-ui",
+ "wsl-traffic-windows",
 ]
 
 [[package]]
@@ -700,6 +701,7 @@ dependencies = [
  "wsl-traffic-diagnostics",
  "wsl-traffic-monitor",
  "wsl-traffic-storage",
+ "wsl-traffic-windows",
 ]
 
 [[package]]

@@ -57,6 +57,7 @@ fn main() {
 
     // Default behavior: Run the active monitoring service and the UI
     let settings = wsl_traffic_storage::load_settings();
+    let _ = wsl_traffic_windows::set_autostart(settings.run_at_startup);
     let mut service = wsl_traffic_monitor::WslTrafficMonitorService::new();
 
     // Start background sampling at config interval (default: 1000ms)

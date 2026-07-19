@@ -280,3 +280,75 @@ pub fn is_elevated() -> bool {
         false
     }
 }
+
+/// Register or unregister the application for autostart on Windows.
+///
+/// # Errors
+/// Returns an error string if writing to registry fails.
+#[allow(unsafe_code)]
+pub fn set_autostart(enabled: bool) -> Result<(), String> {
+    #[cfg(windows)]
+    unsafe {
+        use windows::Win32::System::Registry::{
+            HKEY_CURRENT_USER, KEY_SET_VALUE, REG_SZ, RegCloseKey, RegDeleteValueW, RegOpenKeyExW,
+            RegSetValueExW,
+        };
+        use windows::core::PCWSTR;
+
+        let run_key_path: Vec<u16> = r"Software\Microsoft\Windows\CurrentVersion\Run"
+            .encode_utf16()
+            .chain(Some(0))
+            .collect();
+        let value_name: Vec<u16> = "WslTrafficMonitor".encode_utf16().chain(Some(0)).collect();
+
+        let mut hkey = windows::Win32::System::Registry::HKEY::default();
+        let result = RegOpenKeyExW(
+            HKEY_CURRENT_USER,
+            PCWSTR(run_key_path.as_ptr()),
+            Some(0),
+            KEY_SET_VALUE,
+            &mut hkey,
+        );
+
+        if result.is_err() {
+            return Err(format!("Failed to open Run registry key: {:?}", result));
+        }
+
+        if enabled {
+            let exe_path = std::env::current_exe()
+                .map_err(|e| format!("Failed to get current executable path: {e}"))?;
+            let exe_str = exe_path.to_string_lossy().to_string();
+            let exe_wide: Vec<u16> = exe_str.encode_utf16().chain(Some(0)).collect();
+
+            let bytes = std::slice::from_raw_parts(
+                exe_wide.as_ptr() as *const u8,
+                exe_wide.len() * std::mem::size_of::<u16>(),
+            );
+
+            let set_result =
+                RegSetValueExW(hkey, PCWSTR(value_name.as_ptr()), None, REG_SZ, Some(bytes));
+
+            let _ = RegCloseKey(hkey);
+
+            if set_result.is_err() {
+                return Err(format!(
+                    "Failed to write autostart registry value: {:?}",
+                    set_result
+                ));
+            }
+        } else {
+            let del_result = RegDeleteValueW(hkey, PCWSTR(value_name.as_ptr()));
+            let _ = RegCloseKey(hkey);
+
+            if del_result.is_err() {
+                // Ignore if it wasn't there
+            }
+        }
+        Ok(())
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = enabled;
+        Ok(())
+    }
+}

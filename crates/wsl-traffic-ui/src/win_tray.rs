@@ -56,6 +56,7 @@ const ID_TRAY_DOWNLOAD: usize = 1002;
 const ID_TRAY_UPLOAD: usize = 1003;
 const ID_TRAY_EXIT: usize = 1004;
 const ID_TRAY_DIAGNOSTICS: usize = 1005;
+const ID_TRAY_AUTOSTART: usize = 1006;
 const TRAY_TIMER_ID: usize = 1;
 
 thread_local! {
@@ -88,7 +89,7 @@ impl<P: NetworkProvider> TrayHandler for TrayStateImpl<P> {
     fn on_tray_icon(&mut self, hwnd: HWND, lparam: LPARAM) {
         let event = lparam.0 as u32;
         if event == windows::Win32::UI::WindowsAndMessaging::WM_RBUTTONUP {
-            show_context_menu(hwnd, &self.service, self.settings.speed_unit);
+            show_context_menu(hwnd, &self.service, &self.settings);
         }
     }
 
@@ -102,6 +103,10 @@ impl<P: NetworkProvider> TrayHandler for TrayStateImpl<P> {
             }
         } else if control_id == ID_TRAY_DIAGNOSTICS {
             export_diagnostics(hwnd);
+        } else if control_id == ID_TRAY_AUTOSTART {
+            self.settings.run_at_startup = !self.settings.run_at_startup;
+            let _ = wsl_traffic_storage::save_settings(&self.settings);
+            let _ = wsl_traffic_windows::set_autostart(self.settings.run_at_startup);
         }
     }
 
@@ -178,11 +183,17 @@ fn update_tray_icon_tip(hwnd: HWND, tip: &str) {
 fn show_context_menu<P: NetworkProvider>(
     hwnd: HWND,
     service: &WslTrafficMonitorService<P>,
-    unit: SpeedUnit,
+    settings: &wsl_traffic_storage::UserSettings,
 ) {
     let snapshot = service.get_snapshot();
-    let download_str = format!("Download: {}", format_speed(snapshot.download_speed, unit));
-    let upload_str = format!("Upload: {}", format_speed(snapshot.upload_speed, unit));
+    let download_str = format!(
+        "Download: {}",
+        format_speed(snapshot.download_speed, settings.speed_unit)
+    );
+    let upload_str = format!(
+        "Upload: {}",
+        format_speed(snapshot.upload_speed, settings.speed_unit)
+    );
     let status_str = format!("Status: {:?}", snapshot.status);
 
     unsafe {
@@ -237,6 +248,19 @@ fn show_context_menu<P: NetworkProvider>(
             MF_STRING,
             ID_TRAY_DIAGNOSTICS,
             PCWSTR(diag_wide.as_ptr()),
+        );
+
+        let autostart_text = if settings.run_at_startup {
+            "✓ Run at Startup"
+        } else {
+            "Run at Startup"
+        };
+        let autostart_wide: Vec<u16> = autostart_text.encode_utf16().chain(Some(0)).collect();
+        let _ = AppendMenuW(
+            hmenu,
+            MF_STRING,
+            ID_TRAY_AUTOSTART,
+            PCWSTR(autostart_wide.as_ptr()),
         );
 
         let _ = AppendMenuW(hmenu, MF_SEPARATOR, 0, PCWSTR::null());

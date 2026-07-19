@@ -29,6 +29,8 @@ pub struct UserSettings {
     pub poll_interval_ms: u64,
     /// Speed display units (default: `SpeedUnit::Bytes`).
     pub speed_unit: SpeedUnit,
+    /// Whether the application runs at Windows startup (default: false).
+    pub run_at_startup: bool,
 }
 
 impl Default for UserSettings {
@@ -36,6 +38,7 @@ impl Default for UserSettings {
         Self {
             poll_interval_ms: 1000,
             speed_unit: SpeedUnit::Bytes,
+            run_at_startup: false,
         }
     }
 }
@@ -310,6 +313,7 @@ mod tests {
         let settings = UserSettings {
             poll_interval_ms: 2000,
             speed_unit: SpeedUnit::Bits,
+            run_at_startup: true,
         };
         let serialized = serde_json::to_string(&settings).unwrap();
         let deserialized: UserSettings = serde_json::from_str(&serialized).unwrap();
