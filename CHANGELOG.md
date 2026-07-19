@@ -13,6 +13,7 @@ All notable changes to this project will be documented in this file.
 - Added a mockable `NetworkProvider` trait for 100% deterministic test coverage of all connection, reset, and rate scenarios.
 - Added a drop-safe background worker `ActiveMonitor` to run the sampling loop.
 - Added thread-safe `WslTrafficMonitorService` running the counter sampler in a background thread and exposing real-time query snapshots.
+- Implemented native Windows system tray UI displaying real-time upload and download speeds, subscribed to the monitor service.
 - Added detailed error message tracking and measurement confidence levels dynamically throughout discovery and query operations.
 - Added service lifecycle unit tests validating background ticks, snapshot queries, and double-start prevention.
 

@@ -11,6 +11,16 @@ description = "Native Windows UI boundary for WSL Traffic Monitor."
 tracing.workspace = true
 wsl-traffic-core.workspace = true
 wsl-traffic-monitor.workspace = true
+wsl-traffic-diagnostics.workspace = true
+
+[target.'cfg(windows)'.dependencies]
+windows = { workspace = true, features = [
+    "Win32_Foundation",
+    "Win32_UI_WindowsAndMessaging",
+    "Win32_Graphics_Gdi",
+    "Win32_UI_Shell",
+    "Win32_System_LibraryLoader"
+] }
 
 [lints]
 workspace = true

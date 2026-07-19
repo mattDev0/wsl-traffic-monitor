@@ -672,7 +672,9 @@ name = "wsl-traffic-ui"
 version = "0.1.0"
 dependencies = [
  "tracing",
+ "windows",
  "wsl-traffic-core",
+ "wsl-traffic-diagnostics",
  "wsl-traffic-monitor",
 ]
 
