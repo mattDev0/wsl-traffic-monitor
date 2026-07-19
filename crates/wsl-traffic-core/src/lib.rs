@@ -149,6 +149,17 @@ pub struct DiagnosticsReport {
     pub recommendation: String,
 }
 
+/// A calculated sample representing bandwidth usage over a measurement interval.
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+pub struct TrafficSample {
+    /// Upload speed in bytes per second from WSL user perspective
+    pub upload_bytes_per_sec: f64,
+    /// Download speed in bytes per second from WSL user perspective
+    pub download_bytes_per_sec: f64,
+    /// ISO-8601/RFC-3339 formatted UTC timestamp of the sample
+    pub timestamp: String,
+}
+
 #[cfg(test)]
 mod tests {
     use super::{MeasurementConfidence, PRODUCT_NAME};
