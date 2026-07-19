@@ -223,3 +223,70 @@ pub fn get_adapters() -> Result<Vec<AdapterInfo>, String> {
         ])
     }
 }
+
+/// Raw counter values for a specific network interface.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
+pub struct RawInterfaceCounters {
+    /// Number of bytes sent out of this interface from the host perspective.
+    pub bytes_sent: u64,
+    /// Number of bytes received into this interface from the host perspective.
+    pub bytes_recv: u64,
+    /// Number of packets sent out of this interface from the host perspective.
+    pub packets_sent: u64,
+    /// Number of packets received into this interface from the host perspective.
+    pub packets_recv: u64,
+}
+
+/// Query only raw counters for a specific network interface by LUID.
+///
+/// # Errors
+/// Returns an error string if the interface is not found or querying fails.
+#[allow(unsafe_code)]
+pub fn get_interface_counters(luid: u64) -> Result<RawInterfaceCounters, String> {
+    #[cfg(windows)]
+    {
+        use windows::Win32::Foundation::ERROR_SUCCESS;
+        use windows::Win32::NetworkManagement::IpHelper::{GetIfEntry2, MIB_IF_ROW2};
+
+        let mut row = MIB_IF_ROW2::default();
+        row.InterfaceLuid.Value = luid;
+
+        unsafe {
+            let res = GetIfEntry2(&mut row);
+            if res == ERROR_SUCCESS {
+                Ok(RawInterfaceCounters {
+                    bytes_sent: row.OutOctets,
+                    bytes_recv: row.InOctets,
+                    packets_sent: row.OutUcastPkts + row.OutNUcastPkts,
+                    packets_recv: row.InUcastPkts + row.InNUcastPkts,
+                })
+            } else {
+                Err(format!(
+                    "GetIfEntry2 failed for LUID {luid} with error code {}",
+                    res.0
+                ))
+            }
+        }
+    }
+    #[cfg(not(windows))]
+    {
+        // Mock implementation for Linux development/testing
+        if luid == 123_456_789 {
+            Ok(RawInterfaceCounters {
+                bytes_sent: 1024 * 512,
+                bytes_recv: 1024 * 1024 * 20,
+                packets_sent: 5000,
+                packets_recv: 20000,
+            })
+        } else if luid == 987_654_321 {
+            Ok(RawInterfaceCounters {
+                bytes_sent: 1024 * 1024 * 10,
+                bytes_recv: 1024 * 1024 * 50,
+                packets_sent: 100_000,
+                packets_recv: 500_000,
+            })
+        } else {
+            Err(format!("LUID {luid} not found"))
+        }
+    }
+}
