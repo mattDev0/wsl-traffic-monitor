@@ -602,7 +602,7 @@ fn show_message_box(hwnd: HWND, message: &str, title: &str, is_error: bool) {
 fn show_history(hwnd: HWND) {
     let _ = wsl_traffic_storage::flush_history();
     let mut msg = String::new();
-    
+
     let format_bytes = |bytes: f64| -> String {
         const KB: f64 = 1024.0;
         const MB: f64 = KB * 1024.0;
@@ -647,7 +647,11 @@ fn open_settings(hwnd: HWND, settings: &wsl_traffic_storage::UserSettings) {
     if let Some(path) = wsl_traffic_storage::get_settings_path() {
         use windows::Win32::UI::Shell::ShellExecuteW;
         use windows::Win32::UI::WindowsAndMessaging::SW_SHOW;
-        let file_wide: Vec<u16> = path.to_string_lossy().encode_utf16().chain(Some(0)).collect();
+        let file_wide: Vec<u16> = path
+            .to_string_lossy()
+            .encode_utf16()
+            .chain(Some(0))
+            .collect();
         let op_wide: Vec<u16> = "open".encode_utf16().chain(Some(0)).collect();
         unsafe {
             let _ = ShellExecuteW(
@@ -661,4 +665,3 @@ fn open_settings(hwnd: HWND, settings: &wsl_traffic_storage::UserSettings) {
         }
     }
 }
-
