@@ -1,7 +1,6 @@
 # Project-local agent and generated documentation
 .agent/
 .agents/
-docs/
 
 # Rust build output
 target/
