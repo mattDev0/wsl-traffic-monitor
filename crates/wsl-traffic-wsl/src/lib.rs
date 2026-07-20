@@ -2,7 +2,7 @@
 //!
 //! Handles parsing of `.wslconfig` and executing `wsl.exe` commands to discover
 //! WSL distributions and networking states.
-//! 
+//!
 //! **Safety Rule**: This application is strictly READ-ONLY concerning WSL configuration.
 //! It must NEVER automatically mutate `.wslconfig`, as changing networking modes
 //! (e.g., to mirrored) can destructively break user environments, firewalls, and VPNs.

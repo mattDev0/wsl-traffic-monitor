@@ -51,15 +51,16 @@ pub struct TrayStateImpl<P: NetworkProvider> {
 impl<P: NetworkProvider> TrayHandler for TrayStateImpl<P> {
     fn on_timer(&mut self, hwnd: HWND) {
         let snapshot = self.service.get_snapshot();
-        let tip_text = if snapshot.status == wsl_traffic_monitor::MonitorState::UnsupportedNetworkingMode {
-            "WSL Network Traffic\nUnsupported Mode (Mirrored/VirtioProxy)".to_string()
-        } else {
-            format!(
-                "WSL Network Traffic\nDown: {}\nUp: {}",
-                format_speed(snapshot.download_speed, self.settings.speed_unit),
-                format_speed(snapshot.upload_speed, self.settings.speed_unit)
-            )
-        };
+        let tip_text =
+            if snapshot.status == wsl_traffic_monitor::MonitorState::UnsupportedNetworkingMode {
+                "WSL Network Traffic\nUnsupported Mode (Mirrored/VirtioProxy)".to_string()
+            } else {
+                format!(
+                    "WSL Network Traffic\nDown: {}\nUp: {}",
+                    format_speed(snapshot.download_speed, self.settings.speed_unit),
+                    format_speed(snapshot.upload_speed, self.settings.speed_unit)
+                )
+            };
         let down_compact = format_speed_compact(snapshot.download_speed);
         let up_compact = format_speed_compact(snapshot.upload_speed);
 
