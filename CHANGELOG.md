@@ -2,6 +2,19 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.3.0] - 2026-07-20
+
+### Added
+- Implemented **Dynamic Tray Icon** to render real-time upload and download speeds directly in the taskbar via GDI.
+- Added **View Usage History** dialog to the system tray context menu, exposing the `redb` hourly/daily history backend.
+- Added **Settings...** option to the tray menu to quickly launch and edit `settings.json`.
+- Implemented phase 0 validation experiments for polling overhead and traffic mapping.
+
+### Fixed
+- Fixed an issue where the tray UI could crash due to `RefCell` re-entrancy when opening the context menu.
+- Fixed a bug where `wsl.exe` discovery failed to capture `stdout`, incorrectly transitioning the monitor to a "Disconnected" state.
+- Deduplicated `format_speed()` functions by unifying them in `wsl-traffic-core`.
+
 ## [0.2.0] - 2026-07-19
 
 ### Added

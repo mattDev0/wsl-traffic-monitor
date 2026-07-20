@@ -6,7 +6,8 @@ This repository currently contains **Phase 0: Validation Harness**, a CLI diagno
 
 ## Current Status
 
-- **Phase 0: Validation Harness (Completed)**: Fully implemented CLI tool that aggregates host networking metadata and identifies candidate adapters.
+- **Phase 0, 1 & 2 (Completed)**: Fully native Windows tray application running in the background. It monitors WSL NAT traffic, records rolling history in a `redb` database, and offers a right-click UI for diagnostics, history, and settings.
+- **Phase 3 (In Development)**: We are actively researching and preparing to support WSL's `mirrored` networking mode and VirtioProxy fallback behavior.
 - **Cross-Compilation (Setup)**: Verified target compilation for both Linux and Windows (using `x86_64-pc-windows-gnu`).
 - **Tests & Lints (Clean)**: All unit tests pass, and codebase is free of clippy/rustc warnings.
 
