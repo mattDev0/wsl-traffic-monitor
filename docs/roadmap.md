@@ -25,9 +25,9 @@
 
 ## Phase 3: Advanced Networking Modes
 
-- [ ] Experiment with mirrored networking attribution.
-- [ ] Experiment with VirtioProxy fallback behavior.
-- [ ] Evaluate ETW/WFP validation paths.
+- [x] Identify mirrored networking and VirtioProxy behaviors.
+- [x] Update monitor to explicitly detect and reject mirrored/VirtioProxy/none modes.
+- [x] Provide graceful read-only host-side fallbacks (Unsupported Networking Mode state).
 
 ## Phase 4: Optional Guest Attribution
 

@@ -377,7 +377,10 @@ impl<P: NetworkProvider> WslTrafficMonitor<P> {
                 }
             } else {
                 // No supported interface found
-                if self.networking_mode == "mirrored" || self.networking_mode == "none" || self.networking_mode == "virtioproxy" {
+                if self.networking_mode == "mirrored"
+                    || self.networking_mode == "none"
+                    || self.networking_mode == "virtioproxy"
+                {
                     self.state = MonitorState::UnsupportedNetworkingMode;
                 } else {
                     self.state = MonitorState::Disconnected;
@@ -499,10 +502,16 @@ impl<P: NetworkProvider> WslTrafficMonitor<P> {
             return None;
         }
         self.networking_mode.clone_from(&wsl_info.networking_mode);
-        
-        if self.networking_mode == "mirrored" || self.networking_mode == "none" || self.networking_mode == "virtioproxy" {
+
+        if self.networking_mode == "mirrored"
+            || self.networking_mode == "none"
+            || self.networking_mode == "virtioproxy"
+        {
             self.confidence = MeasurementConfidence::Unsupported;
-            self.last_error = Some(format!("Networking mode '{}' is unsupported. Only 'nat' is fully supported for host-side tracking.", self.networking_mode));
+            self.last_error = Some(format!(
+                "Networking mode '{}' is unsupported. Only 'nat' is fully supported for host-side tracking.",
+                self.networking_mode
+            ));
             return None;
         }
         let docker_info = self.provider.detect_docker(&wsl_info);
@@ -981,6 +990,60 @@ mod tests {
         // NAT mode: OutOctets (sent) = download, InOctets (recv) = upload
         assert_eq!(sample2.download_bytes_per_sec, 5000.0);
         assert_eq!(sample2.upload_bytes_per_sec, 10000.0);
+    }
+
+    #[test]
+    fn test_monitor_unsupported_networking_mode() {
+        let base_instant = std::time::Instant::now();
+        let wsl_info = WslInfo {
+            is_installed: true,
+            wsl_version: Some("2.0.0".to_string()),
+            kernel_version: None,
+            distributions: vec![],
+            networking_mode: "mirrored".to_string(), // unsupported mode
+            wslconfig_parsed: None,
+        };
+        let docker_info = DockerInfo {
+            is_installed: false,
+            has_docker_desktop_distro: false,
+            has_docker_desktop_data_distro: false,
+            running_processes: vec![],
+        };
+        let adapter = AdapterInfo {
+            luid: 100,
+            if_index: 1,
+            guid: "guid".to_string(),
+            alias: "alias".to_string(),
+            friendly_name: "Wi-Fi".to_string(),
+            description: "Intel Wi-Fi".to_string(),
+            if_type: 71,
+            oper_status: 1,
+            mac_address: "mac".to_string(),
+            mtu: 1500,
+            link_speed: 100_000,
+            ipv4_addresses: vec![],
+            ipv6_addresses: vec![],
+            bytes_sent: 1000,
+            bytes_recv: 2000,
+            packets_sent: 0,
+            packets_recv: 0,
+        };
+
+        let provider = MockNetworkProvider {
+            adapters: std::sync::Mutex::new(vec![adapter]),
+            counters: std::sync::Mutex::new(std::collections::HashMap::new()),
+            wsl_info: std::sync::Mutex::new(wsl_info),
+            docker_info: std::sync::Mutex::new(docker_info),
+        };
+
+        let mut monitor = WslTrafficMonitor::new_with_provider(provider);
+
+        // Tick should fail to select the adapter and set state to UnsupportedNetworkingMode
+        let sample = monitor.tick_at(base_instant);
+        assert_eq!(sample.upload_bytes_per_sec, 0.0);
+        assert_eq!(sample.download_bytes_per_sec, 0.0);
+        assert_eq!(monitor.state(), MonitorState::UnsupportedNetworkingMode);
+        assert_eq!(monitor.monitored_luid(), None);
     }
 
     #[test]
