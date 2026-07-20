@@ -27,6 +27,8 @@ const ID_TRAY_UPLOAD: usize = 1003;
 const ID_TRAY_EXIT: usize = 1004;
 const ID_TRAY_DIAGNOSTICS: usize = 1005;
 const ID_TRAY_AUTOSTART: usize = 1006;
+const ID_TRAY_HISTORY: usize = 1007;
+const ID_TRAY_SETTINGS: usize = 1008;
 const TRAY_TIMER_ID: usize = 1;
 
 thread_local! {
@@ -75,6 +77,10 @@ impl<P: NetworkProvider> TrayHandler for TrayStateImpl<P> {
             unsafe {
                 let _ = DestroyWindow(hwnd);
             }
+        } else if control_id == ID_TRAY_HISTORY {
+            show_history(hwnd);
+        } else if control_id == ID_TRAY_SETTINGS {
+            open_settings(hwnd, &self.settings);
         } else if control_id == ID_TRAY_DIAGNOSTICS {
             export_diagnostics(hwnd);
         } else if control_id == ID_TRAY_AUTOSTART {
@@ -369,6 +375,17 @@ fn show_context_menu<P: NetworkProvider>(
 
         let _ = AppendMenuW(hmenu, MF_SEPARATOR, 0, PCWSTR::null());
 
+        let history_wide: Vec<u16> = "View Usage History..."
+            .encode_utf16()
+            .chain(Some(0))
+            .collect();
+        let _ = AppendMenuW(
+            hmenu,
+            MF_STRING,
+            ID_TRAY_HISTORY,
+            PCWSTR(history_wide.as_ptr()),
+        );
+
         let diag_wide: Vec<u16> = "Export Diagnostics..."
             .encode_utf16()
             .chain(Some(0))
@@ -391,6 +408,14 @@ fn show_context_menu<P: NetworkProvider>(
             MF_STRING,
             ID_TRAY_AUTOSTART,
             PCWSTR(autostart_wide.as_ptr()),
+        );
+
+        let settings_wide: Vec<u16> = "Settings...".encode_utf16().chain(Some(0)).collect();
+        let _ = AppendMenuW(
+            hmenu,
+            MF_STRING,
+            ID_TRAY_SETTINGS,
+            PCWSTR(settings_wide.as_ptr()),
         );
 
         let _ = AppendMenuW(hmenu, MF_SEPARATOR, 0, PCWSTR::null());
@@ -573,3 +598,67 @@ fn show_message_box(hwnd: HWND, message: &str, title: &str, is_error: bool) {
         );
     }
 }
+
+fn show_history(hwnd: HWND) {
+    let _ = wsl_traffic_storage::flush_history();
+    let mut msg = String::new();
+    
+    let format_bytes = |bytes: f64| -> String {
+        const KB: f64 = 1024.0;
+        const MB: f64 = KB * 1024.0;
+        const GB: f64 = MB * 1024.0;
+        const TB: f64 = GB * 1024.0;
+        if bytes >= TB {
+            format!("{:.2} TB", bytes / TB)
+        } else if bytes >= GB {
+            format!("{:.2} GB", bytes / GB)
+        } else if bytes >= MB {
+            format!("{:.2} MB", bytes / MB)
+        } else if bytes >= KB {
+            format!("{:.2} KB", bytes / KB)
+        } else {
+            format!("{bytes} B")
+        }
+    };
+
+    match wsl_traffic_storage::get_daily_history(7) {
+        Ok(history) if !history.is_empty() => {
+            for (date, up, down) in history {
+                let date_str = if date.len() >= 14 {
+                    format!("{}-{}-{}", &date[6..10], &date[10..12], &date[12..14])
+                } else {
+                    date.clone()
+                };
+                let up_str = format_bytes(up as f64);
+                let down_str = format_bytes(down as f64);
+                msg.push_str(&format!("{}: Up {}, Down {}\n", date_str, up_str, down_str));
+            }
+        }
+        _ => {
+            msg.push_str("No history available yet.");
+        }
+    }
+    show_message_box(hwnd, &msg, "Usage History (Last 7 Days)", false);
+}
+
+#[allow(unsafe_code)]
+fn open_settings(hwnd: HWND, settings: &wsl_traffic_storage::UserSettings) {
+    let _ = wsl_traffic_storage::save_settings(settings);
+    if let Some(path) = wsl_traffic_storage::get_settings_path() {
+        use windows::Win32::UI::Shell::ShellExecuteW;
+        use windows::Win32::UI::WindowsAndMessaging::SW_SHOW;
+        let file_wide: Vec<u16> = path.to_string_lossy().encode_utf16().chain(Some(0)).collect();
+        let op_wide: Vec<u16> = "open".encode_utf16().chain(Some(0)).collect();
+        unsafe {
+            let _ = ShellExecuteW(
+                Some(hwnd),
+                PCWSTR(op_wide.as_ptr()),
+                PCWSTR(file_wide.as_ptr()),
+                PCWSTR::null(),
+                PCWSTR::null(),
+                SW_SHOW,
+            );
+        }
+    }
+}
+
