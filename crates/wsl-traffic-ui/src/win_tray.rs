@@ -1,5 +1,4 @@
 //! Native Windows system tray UI implementation.
-#![allow(clippy::all, clippy::pedantic, clippy::restriction)]
 #![cfg(windows)]
 #![allow(non_snake_case)]
 
@@ -10,44 +9,15 @@ use windows::Win32::UI::Shell::{
 };
 use windows::Win32::UI::WindowsAndMessaging::{
     AppendMenuW, CS_HREDRAW, CS_VREDRAW, CW_USEDEFAULT, CreatePopupMenu, CreateWindowExW,
-    DefWindowProcW, DestroyWindow, DispatchMessageW, GetCursorPos, GetMessageW, HICON,
+    DefWindowProcW, DestroyIcon, DestroyWindow, DispatchMessageW, GetCursorPos, GetMessageW, HICON,
     IDI_APPLICATION, KillTimer, LoadIconW, MF_GRAYED, MF_SEPARATOR, MF_STRING, PostMessageW,
     PostQuitMessage, RegisterClassW, SetForegroundWindow, SetTimer, TPM_BOTTOMALIGN, TPM_LEFTALIGN,
     TrackPopupMenu, TranslateMessage, WINDOW_EX_STYLE, WM_COMMAND, WM_DESTROY, WM_TIMER, WM_USER,
     WNDCLASSW, WS_OVERLAPPEDWINDOW,
 };
 use windows::core::{PCWSTR, w};
+use wsl_traffic_core::{format_speed, format_speed_compact};
 use wsl_traffic_monitor::{NetworkProvider, WslTrafficMonitorService};
-
-use wsl_traffic_storage::SpeedUnit;
-
-fn format_speed(bytes_per_sec: f64, unit: SpeedUnit) -> String {
-    match unit {
-        SpeedUnit::Bytes => {
-            if bytes_per_sec >= 1024.0 * 1024.0 * 1024.0 {
-                format!("{:.2} GiB/s", bytes_per_sec / (1024.0 * 1024.0 * 1024.0))
-            } else if bytes_per_sec >= 1024.0 * 1024.0 {
-                format!("{:.2} MiB/s", bytes_per_sec / (1024.0 * 1024.0))
-            } else if bytes_per_sec >= 1024.0 {
-                format!("{:.2} KiB/s", bytes_per_sec / 1024.0)
-            } else {
-                format!("{bytes_per_sec:.0} B/s")
-            }
-        }
-        SpeedUnit::Bits => {
-            let bits_per_sec = bytes_per_sec * 8.0;
-            if bits_per_sec >= 1000.0 * 1000.0 * 1000.0 {
-                format!("{:.2} Gbps", bits_per_sec / (1000.0 * 1000.0 * 1000.0))
-            } else if bits_per_sec >= 1000.0 * 1000.0 {
-                format!("{:.2} Mbps", bits_per_sec / (1000.0 * 1000.0))
-            } else if bits_per_sec >= 1000.0 {
-                format!("{:.2} Kbps", bits_per_sec / 1000.0)
-            } else {
-                format!("{bits_per_sec:.0} bps")
-            }
-        }
-    }
-}
 
 const WM_TRAY_ICON: u32 = WM_USER + 1;
 const ID_TRAY_TITLE: usize = 1000;
@@ -60,7 +30,7 @@ const ID_TRAY_AUTOSTART: usize = 1006;
 const TRAY_TIMER_ID: usize = 1;
 
 thread_local! {
-    static TRAY_STATE: std::cell::RefCell<Option<Box<dyn TrayHandler>>> = std::cell::RefCell::new(None);
+    static TRAY_STATE: std::cell::RefCell<Option<Box<dyn TrayHandler>>> = const { std::cell::RefCell::new(None) };
 }
 
 trait TrayHandler {
@@ -73,6 +43,7 @@ trait TrayHandler {
 pub struct TrayStateImpl<P: NetworkProvider> {
     pub(crate) service: WslTrafficMonitorService<P>,
     pub(crate) settings: wsl_traffic_storage::UserSettings,
+    pub(crate) current_icon: Option<HICON>,
 }
 
 impl<P: NetworkProvider> TrayHandler for TrayStateImpl<P> {
@@ -83,7 +54,10 @@ impl<P: NetworkProvider> TrayHandler for TrayStateImpl<P> {
             format_speed(snapshot.download_speed, self.settings.speed_unit),
             format_speed(snapshot.upload_speed, self.settings.speed_unit)
         );
-        update_tray_icon_tip(hwnd, &tip_text);
+        let down_compact = format_speed_compact(snapshot.download_speed);
+        let up_compact = format_speed_compact(snapshot.upload_speed);
+
+        self.update_tray_icon(hwnd, &tip_text, &down_compact, &up_compact);
     }
 
     fn on_tray_icon(&mut self, hwnd: HWND, lparam: LPARAM) {
@@ -112,9 +86,56 @@ impl<P: NetworkProvider> TrayHandler for TrayStateImpl<P> {
 
     #[allow(unsafe_code)]
     fn on_destroy(&mut self, _hwnd: HWND) {
+        if let Some(old_icon) = self.current_icon.take() {
+            unsafe {
+                let _ = DestroyIcon(old_icon);
+            }
+        }
         // Safety: calling standard post quit message loop exit.
         unsafe {
             PostQuitMessage(0);
+        }
+    }
+}
+
+impl<P: NetworkProvider> TrayStateImpl<P> {
+    #[allow(unsafe_code)]
+    fn update_tray_icon(&mut self, hwnd: HWND, tip: &str, down_compact: &str, up_compact: &str) {
+        let down_text = format!("D {down_compact}");
+        let up_text = format!("U {up_compact}");
+
+        let new_icon = create_speed_icon(&down_text, &up_text);
+
+        let mut flags = NIF_TIP;
+        let icon_to_set = if let Some(icon) = new_icon {
+            flags |= NIF_ICON;
+            icon
+        } else {
+            HICON(std::ptr::null_mut())
+        };
+
+        let mut nid = NOTIFYICONDATAW {
+            cbSize: std::mem::size_of::<NOTIFYICONDATAW>() as u32,
+            hWnd: hwnd,
+            uID: 1,
+            uFlags: flags,
+            hIcon: icon_to_set,
+            ..Default::default()
+        };
+
+        let wide: Vec<u16> = tip.encode_utf16().collect();
+        let len = wide.len().min(nid.szTip.len() - 1);
+        nid.szTip[..len].copy_from_slice(&wide[..len]);
+        nid.szTip[len] = 0;
+
+        unsafe {
+            let _ = Shell_NotifyIconW(NIM_MODIFY, &nid);
+            if new_icon.is_some() {
+                if let Some(old_icon) = self.current_icon.take() {
+                    let _ = DestroyIcon(old_icon);
+                }
+                self.current_icon = new_icon;
+            }
         }
     }
 }
@@ -124,32 +145,40 @@ unsafe extern "system" fn WndProc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: 
     match msg {
         WM_TIMER => {
             TRAY_STATE.with(|state| {
-                if let Some(handler) = state.borrow_mut().as_mut() {
-                    handler.on_timer(hwnd);
+                if let Ok(mut guard) = state.try_borrow_mut() {
+                    if let Some(handler) = guard.as_mut() {
+                        handler.on_timer(hwnd);
+                    }
                 }
             });
             LRESULT(0)
         }
         WM_TRAY_ICON => {
             TRAY_STATE.with(|state| {
-                if let Some(handler) = state.borrow_mut().as_mut() {
-                    handler.on_tray_icon(hwnd, lparam);
+                if let Ok(mut guard) = state.try_borrow_mut() {
+                    if let Some(handler) = guard.as_mut() {
+                        handler.on_tray_icon(hwnd, lparam);
+                    }
                 }
             });
             LRESULT(0)
         }
         WM_COMMAND => {
             TRAY_STATE.with(|state| {
-                if let Some(handler) = state.borrow_mut().as_mut() {
-                    handler.on_command(hwnd, wparam);
+                if let Ok(mut guard) = state.try_borrow_mut() {
+                    if let Some(handler) = guard.as_mut() {
+                        handler.on_command(hwnd, wparam);
+                    }
                 }
             });
             LRESULT(0)
         }
         WM_DESTROY => {
             TRAY_STATE.with(|state| {
-                if let Some(handler) = state.borrow_mut().as_mut() {
-                    handler.on_destroy(hwnd);
+                if let Ok(mut guard) = state.try_borrow_mut() {
+                    if let Some(handler) = guard.as_mut() {
+                        handler.on_destroy(hwnd);
+                    }
                 }
             });
             LRESULT(0)
@@ -159,23 +188,124 @@ unsafe extern "system" fn WndProc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: 
 }
 
 #[allow(unsafe_code)]
-fn update_tray_icon_tip(hwnd: HWND, tip: &str) {
-    let mut nid = NOTIFYICONDATAW {
-        cbSize: std::mem::size_of::<NOTIFYICONDATAW>() as u32,
-        hWnd: hwnd,
-        uID: 1,
-        uFlags: NIF_TIP,
-        ..Default::default()
+fn create_speed_icon(down_text: &str, up_text: &str) -> Option<HICON> {
+    use windows::Win32::Foundation::{COLORREF, RECT};
+    use windows::Win32::Graphics::Gdi::{
+        CreateCompatibleBitmap, CreateCompatibleDC, CreateFontW, DT_CENTER, DT_SINGLELINE,
+        DT_VCENTER, DeleteDC, DeleteObject, DrawTextW, FONT_CHARSET, FONT_CLIP_PRECISION,
+        FONT_OUTPUT_PRECISION, FONT_QUALITY, FW_BOLD, GetDC, ReleaseDC, SelectObject, SetBkMode,
+        SetTextColor, TRANSPARENT,
     };
+    use windows::Win32::UI::WindowsAndMessaging::{CreateIconIndirect, ICONINFO};
 
-    let wide: Vec<u16> = tip.encode_utf16().collect();
-    let len = wide.len().min(nid.szTip.len() - 1);
-    nid.szTip[..len].copy_from_slice(&wide[..len]);
-    nid.szTip[len] = 0;
-
-    // Safety: modifying existing registered tray icon by valid window handle and index.
     unsafe {
-        let _ = Shell_NotifyIconW(NIM_MODIFY, &nid);
+        let hdc_screen = GetDC(None);
+        if hdc_screen.is_invalid() {
+            return None;
+        }
+        let hdc_mem = CreateCompatibleDC(Some(hdc_screen));
+        if hdc_mem.is_invalid() {
+            let _ = ReleaseDC(None, hdc_screen);
+            return None;
+        }
+
+        let width = 32;
+        let height = 32;
+
+        let hbm_color = CreateCompatibleBitmap(hdc_screen, width, height);
+        let hbm_mask = CreateCompatibleBitmap(hdc_screen, width, height);
+
+        let _ = ReleaseDC(None, hdc_screen);
+
+        if hbm_color.is_invalid() || hbm_mask.is_invalid() {
+            if !hbm_color.is_invalid() {
+                let _ = DeleteObject(hbm_color.into());
+            }
+            if !hbm_mask.is_invalid() {
+                let _ = DeleteObject(hbm_mask.into());
+            }
+            let _ = DeleteDC(hdc_mem);
+            return None;
+        }
+
+        let old_bm = SelectObject(hdc_mem, hbm_color.into());
+        let _ = SetBkMode(hdc_mem, TRANSPARENT);
+
+        let font_name: Vec<u16> = "Segoe UI".encode_utf16().chain(Some(0)).collect();
+        let hfont = CreateFontW(
+            13,
+            0,
+            0,
+            0,
+            FW_BOLD.0 as i32,
+            0,
+            0,
+            0,
+            FONT_CHARSET(0),
+            FONT_OUTPUT_PRECISION(0),
+            FONT_CLIP_PRECISION(0),
+            FONT_QUALITY(0),
+            0,
+            PCWSTR(font_name.as_ptr()),
+        );
+
+        let old_font = SelectObject(hdc_mem, hfont.into());
+
+        let mut rect_down = RECT {
+            left: 0,
+            top: 0,
+            right: width,
+            bottom: height / 2,
+        };
+
+        let mut rect_up = RECT {
+            left: 0,
+            top: height / 2,
+            right: width,
+            bottom: height,
+        };
+
+        // Cyan for download (0x00FFDC00 in 0x00BBGGRR format)
+        let _ = SetTextColor(hdc_mem, COLORREF(0x00FFDC00));
+        let mut down_wide: Vec<u16> = down_text.encode_utf16().chain(Some(0)).collect();
+        let down_len = down_wide.len() - 1;
+        let _ = DrawTextW(
+            hdc_mem,
+            &mut down_wide[..down_len],
+            &mut rect_down,
+            DT_CENTER | DT_SINGLELINE | DT_VCENTER,
+        );
+
+        // Bright Yellow/Orange for upload (0x0000D0FF in 0x00BBGGRR format)
+        let _ = SetTextColor(hdc_mem, COLORREF(0x0000D0FF));
+        let mut up_wide: Vec<u16> = up_text.encode_utf16().chain(Some(0)).collect();
+        let up_len = up_wide.len() - 1;
+        let _ = DrawTextW(
+            hdc_mem,
+            &mut up_wide[..up_len],
+            &mut rect_up,
+            DT_CENTER | DT_SINGLELINE | DT_VCENTER,
+        );
+
+        let _ = SelectObject(hdc_mem, old_font.into());
+        let _ = DeleteObject(hfont.into());
+        let _ = SelectObject(hdc_mem, old_bm);
+        let _ = DeleteDC(hdc_mem);
+
+        let icon_info = ICONINFO {
+            fIcon: true.into(),
+            xHotspot: 0,
+            yHotspot: 0,
+            hbmMask: hbm_mask,
+            hbmColor: hbm_color,
+        };
+
+        let hicon = CreateIconIndirect(&icon_info).ok();
+
+        let _ = DeleteObject(hbm_color.into());
+        let _ = DeleteObject(hbm_mask.into());
+
+        hicon
     }
 }
 
@@ -293,7 +423,11 @@ pub fn run_tray_ui<P: NetworkProvider>(
     settings: wsl_traffic_storage::UserSettings,
 ) -> Result<(), String> {
     TRAY_STATE.with(|state| {
-        *state.borrow_mut() = Some(Box::new(TrayStateImpl { service, settings }));
+        *state.borrow_mut() = Some(Box::new(TrayStateImpl {
+            service,
+            settings,
+            current_icon: None,
+        }));
     });
 
     unsafe {
