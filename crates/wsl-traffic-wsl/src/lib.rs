@@ -134,6 +134,7 @@ pub fn get_wslconfig_path() -> Option<PathBuf> {
 
 /// Detect the active WSL configuration and installation status.
 #[must_use]
+#[allow(clippy::too_many_lines)]
 pub fn detect_wsl() -> WslInfo {
     let wslconfig_path = get_wslconfig_path();
     let wslconfig_parsed = wslconfig_path.and_then(|path| parse_ini_file(path).ok());
@@ -159,8 +160,12 @@ pub fn detect_wsl() -> WslInfo {
         use std::time::Duration;
 
         let run_cmd = |args: &[&str]| -> Option<String> {
+            use std::os::windows::process::CommandExt;
             let mut cmd = Command::new("wsl.exe");
             cmd.args(args);
+            cmd.stdout(std::process::Stdio::piped());
+            cmd.stderr(std::process::Stdio::piped());
+            cmd.creation_flags(0x08000000); // CREATE_NO_WINDOW
 
             let child = cmd.spawn().ok()?;
             let (tx, rx) = mpsc::channel();
@@ -177,6 +182,7 @@ pub fn detect_wsl() -> WslInfo {
                 // Timeout or error: forcibly kill the child process
                 let _ = Command::new("taskkill.exe")
                     .args(["/F", "/PID", &child_id.to_string()])
+                    .creation_flags(0x08000000) // CREATE_NO_WINDOW
                     .output();
                 None
             }?;
