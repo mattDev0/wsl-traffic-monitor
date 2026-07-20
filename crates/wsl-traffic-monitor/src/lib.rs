@@ -201,6 +201,8 @@ pub enum MonitorState {
     Active,
     /// Interface is missing or disconnected; attempting to reconnect.
     Disconnected,
+    /// The configured .wslconfig networking mode (e.g., mirrored) is unsupported for host-side monitoring.
+    UnsupportedNetworkingMode,
 }
 
 /// Abstract provider for retrieving OS-level network information (for testing and dependency injection).
@@ -375,7 +377,11 @@ impl<P: NetworkProvider> WslTrafficMonitor<P> {
                 }
             } else {
                 // No supported interface found
-                self.state = MonitorState::Disconnected;
+                if self.networking_mode == "mirrored" || self.networking_mode == "none" || self.networking_mode == "virtioproxy" {
+                    self.state = MonitorState::UnsupportedNetworkingMode;
+                } else {
+                    self.state = MonitorState::Disconnected;
+                }
                 self.monitored_luid = None;
                 self.last_counters = None;
                 self.last_time = None;
@@ -493,6 +499,12 @@ impl<P: NetworkProvider> WslTrafficMonitor<P> {
             return None;
         }
         self.networking_mode.clone_from(&wsl_info.networking_mode);
+        
+        if self.networking_mode == "mirrored" || self.networking_mode == "none" || self.networking_mode == "virtioproxy" {
+            self.confidence = MeasurementConfidence::Unsupported;
+            self.last_error = Some(format!("Networking mode '{}' is unsupported. Only 'nat' is fully supported for host-side tracking.", self.networking_mode));
+            return None;
+        }
         let docker_info = self.provider.detect_docker(&wsl_info);
 
         match self.provider.get_adapters() {
