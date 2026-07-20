@@ -13,14 +13,7 @@ use std::time::{Duration, Instant};
 /// Logical storage schema version reserved for future migrations.
 pub const STORAGE_SCHEMA_VERSION: u16 = 0;
 
-/// The units used to display network speeds.
-#[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq, Eq)]
-pub enum SpeedUnit {
-    /// Display speed in Bytes per second (B/s, KiB/s, MiB/s).
-    Bytes,
-    /// Display speed in Bits per second (bps, Kbps, Mbps).
-    Bits,
-}
+pub use wsl_traffic_core::SpeedUnit;
 
 /// User configuration settings for WSL Traffic Monitor.
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]

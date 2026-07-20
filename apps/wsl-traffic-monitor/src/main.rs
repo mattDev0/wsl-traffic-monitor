@@ -2,6 +2,8 @@
 
 use std::env;
 use std::process;
+#[allow(unused_imports)]
+use wsl_traffic_core::format_speed;
 use wsl_traffic_diagnostics::{format_report_as_json, format_report_as_text, generate_report};
 
 fn main() {
@@ -109,33 +111,4 @@ fn print_help() {
     println!("  -d, --diagnostics  Output the diagnostics report");
     println!("  -j, --json         Output the diagnostics report in structured JSON format");
     println!("  -h, --help         Show this help message");
-}
-
-#[allow(dead_code)]
-fn format_speed(bytes_per_sec: f64, unit: wsl_traffic_storage::SpeedUnit) -> String {
-    match unit {
-        wsl_traffic_storage::SpeedUnit::Bytes => {
-            if bytes_per_sec >= 1024.0 * 1024.0 * 1024.0 {
-                format!("{:.2} GiB/s", bytes_per_sec / (1024.0 * 1024.0 * 1024.0))
-            } else if bytes_per_sec >= 1024.0 * 1024.0 {
-                format!("{:.2} MiB/s", bytes_per_sec / (1024.0 * 1024.0))
-            } else if bytes_per_sec >= 1024.0 {
-                format!("{:.2} KiB/s", bytes_per_sec / 1024.0)
-            } else {
-                format!("{bytes_per_sec:.0} B/s")
-            }
-        }
-        wsl_traffic_storage::SpeedUnit::Bits => {
-            let bits_per_sec = bytes_per_sec * 8.0;
-            if bits_per_sec >= 1000.0 * 1000.0 * 1000.0 {
-                format!("{:.2} Gbps", bits_per_sec / (1000.0 * 1000.0 * 1000.0))
-            } else if bits_per_sec >= 1000.0 * 1000.0 {
-                format!("{:.2} Mbps", bits_per_sec / (1000.0 * 1000.0))
-            } else if bits_per_sec >= 1000.0 {
-                format!("{:.2} Kbps", bits_per_sec / 1000.0)
-            } else {
-                format!("{bits_per_sec:.0} bps")
-            }
-        }
-    }
 }

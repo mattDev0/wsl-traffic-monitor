@@ -32,6 +32,61 @@ impl std::fmt::Display for MeasurementConfidence {
     }
 }
 
+/// The units used to display network speeds.
+#[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq, Eq)]
+pub enum SpeedUnit {
+    /// Display speed in Bytes per second (B/s, KiB/s, MiB/s).
+    Bytes,
+    /// Display speed in Bits per second (bps, Kbps, Mbps).
+    Bits,
+}
+
+/// Format speed in bytes per second into a human-readable string given `SpeedUnit`.
+#[must_use]
+#[allow(clippy::cast_precision_loss)]
+pub fn format_speed(bytes_per_sec: f64, unit: SpeedUnit) -> String {
+    match unit {
+        SpeedUnit::Bytes => {
+            if bytes_per_sec >= 1024.0 * 1024.0 * 1024.0 {
+                format!("{:.2} GiB/s", bytes_per_sec / (1024.0 * 1024.0 * 1024.0))
+            } else if bytes_per_sec >= 1024.0 * 1024.0 {
+                format!("{:.2} MiB/s", bytes_per_sec / (1024.0 * 1024.0))
+            } else if bytes_per_sec >= 1024.0 {
+                format!("{:.2} KiB/s", bytes_per_sec / 1024.0)
+            } else {
+                format!("{bytes_per_sec:.0} B/s")
+            }
+        }
+        SpeedUnit::Bits => {
+            let bits_per_sec = bytes_per_sec * 8.0;
+            if bits_per_sec >= 1000.0 * 1000.0 * 1000.0 {
+                format!("{:.2} Gbps", bits_per_sec / (1000.0 * 1000.0 * 1000.0))
+            } else if bits_per_sec >= 1000.0 * 1000.0 {
+                format!("{:.2} Mbps", bits_per_sec / (1000.0 * 1000.0))
+            } else if bits_per_sec >= 1000.0 {
+                format!("{:.2} Kbps", bits_per_sec / 1000.0)
+            } else {
+                format!("{bits_per_sec:.0} bps")
+            }
+        }
+    }
+}
+
+/// Format speed into a compact string suitable for icon rendering (e.g. "1.2M", "500K", "0").
+#[must_use]
+#[allow(clippy::cast_precision_loss)]
+pub fn format_speed_compact(bytes_per_sec: f64) -> String {
+    if bytes_per_sec >= 1024.0 * 1024.0 * 1024.0 {
+        format!("{:.1}G", bytes_per_sec / (1024.0 * 1024.0 * 1024.0))
+    } else if bytes_per_sec >= 1024.0 * 1024.0 {
+        format!("{:.1}M", bytes_per_sec / (1024.0 * 1024.0))
+    } else if bytes_per_sec >= 1024.0 {
+        format!("{:.0}K", bytes_per_sec / 1024.0)
+    } else {
+        format!("{bytes_per_sec:.0}")
+    }
+}
+
 /// Detailed information about a network adapter in the host system.
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 pub struct AdapterInfo {
@@ -196,5 +251,22 @@ mod tests {
             MeasurementConfidence::High,
             MeasurementConfidence::Unsupported
         );
+    }
+
+    #[test]
+    fn test_format_speed() {
+        use super::{SpeedUnit, format_speed};
+        assert_eq!(format_speed(500.0, SpeedUnit::Bytes), "500 B/s");
+        assert_eq!(format_speed(2048.0, SpeedUnit::Bytes), "2.00 KiB/s");
+        assert_eq!(format_speed(1000.0, SpeedUnit::Bits), "8.00 Kbps");
+    }
+
+    #[test]
+    fn test_format_speed_compact() {
+        use super::format_speed_compact;
+        assert_eq!(format_speed_compact(0.0), "0");
+        assert_eq!(format_speed_compact(500.0), "500");
+        assert_eq!(format_speed_compact(1500.0), "1K");
+        assert_eq!(format_speed_compact(1_500_000.0), "1.4M");
     }
 }
