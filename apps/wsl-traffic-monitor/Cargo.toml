@@ -21,6 +21,7 @@ wsl-traffic-monitor.workspace = true
 wsl-traffic-storage.workspace = true
 wsl-traffic-ui.workspace = true
 wsl-traffic-windows.workspace = true
+wsl-traffic-wsl.workspace = true
 
 [lints]
 workspace = true

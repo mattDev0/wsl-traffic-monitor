@@ -675,6 +675,7 @@ dependencies = [
  "wsl-traffic-storage",
  "wsl-traffic-ui",
  "wsl-traffic-windows",
+ "wsl-traffic-wsl",
 ]
 
 [[package]]
