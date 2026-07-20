@@ -2,7 +2,11 @@
 
 WSL Traffic Monitor is a lightweight native Windows application for measuring WSL2 network traffic and showing real-time upload/download speeds in a tray/taskbar interface.
 
-This repository currently contains **Phase 0: Validation Harness**, a CLI diagnostics tool designed to query host network adapters, parse `.wslconfig` and WSL installations, check Docker Desktop backend processes, and classify/score each adapter for WSL monitoring suitability.
+This repository contains a full **Phase 1 & 2 Prototype**. It includes the core NAT-mode traffic sampler, a native Windows system tray UI, rolling usage history (`redb` backed), and a diagnostic harness that handles WSL adapter discovery and Docker Desktop detection.
+
+### Known Limitations (Phase 2)
+- **Windows Smoke-Testing**: The tray icon and history persistence are feature-complete prototypes. Rigorous validation for long-running uptime, Explorer restarts, and Windows network-change events is pending.
+- **Docker Desktop**: Docker installations and WSL backend VMs are detected to improve confidence scoring, but their NAT traffic is currently blended with regular WSL traffic and is not explicitly separated.
 
 ## Current Status
 
