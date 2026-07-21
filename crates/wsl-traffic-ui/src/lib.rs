@@ -5,6 +5,8 @@
 use wsl_traffic_monitor::NetworkProvider;
 
 #[cfg(windows)]
+mod win_overlay;
+#[cfg(windows)]
 mod win_tray;
 
 /// Run the system tray UI. On Windows, this enters the Win32 message loop and displays the tray icon.

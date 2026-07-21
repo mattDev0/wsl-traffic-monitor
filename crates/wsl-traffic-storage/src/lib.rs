@@ -24,6 +24,33 @@ pub struct UserSettings {
     pub speed_unit: SpeedUnit,
     /// Whether the application runs at Windows startup (default: false).
     pub run_at_startup: bool,
+    /// Whether the floating overlay is visible (default: true).
+    #[serde(default = "default_true")]
+    pub show_overlay: bool,
+    /// X position of the floating overlay (default: -1 for auto/bottom-right).
+    #[serde(default = "default_neg_one")]
+    pub overlay_x: i32,
+    /// Y position of the floating overlay (default: -1 for auto/bottom-right).
+    #[serde(default = "default_neg_one")]
+    pub overlay_y: i32,
+    /// Whether overlay position is locked from dragging (default: false).
+    #[serde(default)]
+    pub overlay_locked: bool,
+    /// Overlay opacity percentage (50-100, default: 90).
+    #[serde(default = "default_opacity")]
+    pub overlay_opacity: u8,
+}
+
+fn default_true() -> bool {
+    true
+}
+
+fn default_neg_one() -> i32 {
+    -1
+}
+
+fn default_opacity() -> u8 {
+    90
 }
 
 impl Default for UserSettings {
@@ -32,6 +59,11 @@ impl Default for UserSettings {
             poll_interval_ms: 1000,
             speed_unit: SpeedUnit::Bytes,
             run_at_startup: false,
+            show_overlay: true,
+            overlay_x: -1,
+            overlay_y: -1,
+            overlay_locked: false,
+            overlay_opacity: 90,
         }
     }
 }
@@ -307,6 +339,7 @@ mod tests {
             poll_interval_ms: 2000,
             speed_unit: SpeedUnit::Bits,
             run_at_startup: true,
+            ..UserSettings::default()
         };
         let serialized = serde_json::to_string(&settings).unwrap();
         let deserialized: UserSettings = serde_json::from_str(&serialized).unwrap();

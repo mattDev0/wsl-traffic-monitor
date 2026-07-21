@@ -19,7 +19,10 @@ use windows::core::{PCWSTR, w};
 use wsl_traffic_core::{format_speed, format_speed_compact};
 use wsl_traffic_monitor::{NetworkProvider, WslTrafficMonitorService};
 
+use crate::win_overlay;
+
 const WM_TRAY_ICON: u32 = WM_USER + 1;
+const WM_OVERLAY_RBUTTONUP: u32 = WM_USER + 2;
 const ID_TRAY_TITLE: usize = 1000;
 const ID_TRAY_STATUS: usize = 1001;
 const ID_TRAY_DOWNLOAD: usize = 1002;
@@ -29,6 +32,8 @@ const ID_TRAY_DIAGNOSTICS: usize = 1005;
 const ID_TRAY_AUTOSTART: usize = 1006;
 const ID_TRAY_HISTORY: usize = 1007;
 const ID_TRAY_SETTINGS: usize = 1008;
+const ID_TRAY_TOGGLE_OVERLAY: usize = 1009;
+const ID_TRAY_LOCK_OVERLAY: usize = 1010;
 const TRAY_TIMER_ID: usize = 1;
 
 thread_local! {
@@ -40,12 +45,14 @@ trait TrayHandler {
     fn on_tray_icon(&mut self, hwnd: HWND, lparam: LPARAM);
     fn on_command(&mut self, hwnd: HWND, wparam: WPARAM);
     fn on_destroy(&mut self, hwnd: HWND);
+    fn set_overlay_hwnd(&mut self, overlay_hwnd: HWND);
 }
 
 pub struct TrayStateImpl<P: NetworkProvider> {
     pub(crate) service: WslTrafficMonitorService<P>,
     pub(crate) settings: wsl_traffic_storage::UserSettings,
     pub(crate) current_icon: Option<HICON>,
+    pub(crate) hwnd_overlay: Option<HWND>,
 }
 
 impl<P: NetworkProvider> TrayHandler for TrayStateImpl<P> {
@@ -65,6 +72,10 @@ impl<P: NetworkProvider> TrayHandler for TrayStateImpl<P> {
         let up_compact = format_speed_compact(snapshot.upload_speed);
 
         self.update_tray_icon(hwnd, &tip_text, &down_compact, &up_compact);
+
+        if let Some(overlay_hwnd) = self.hwnd_overlay {
+            win_overlay::update_overlay_snapshot(overlay_hwnd, snapshot, &self.settings);
+        }
     }
 
     fn on_tray_icon(&mut self, hwnd: HWND, lparam: LPARAM) {
@@ -92,11 +103,32 @@ impl<P: NetworkProvider> TrayHandler for TrayStateImpl<P> {
             self.settings.run_at_startup = !self.settings.run_at_startup;
             let _ = wsl_traffic_storage::save_settings(&self.settings);
             let _ = wsl_traffic_windows::set_autostart(self.settings.run_at_startup);
+        } else if control_id == ID_TRAY_TOGGLE_OVERLAY {
+            self.settings.show_overlay = !self.settings.show_overlay;
+            let _ = wsl_traffic_storage::save_settings(&self.settings);
+            if let Some(overlay_hwnd) = self.hwnd_overlay {
+                win_overlay::set_overlay_visible(overlay_hwnd, self.settings.show_overlay);
+            }
+        } else if control_id == ID_TRAY_LOCK_OVERLAY {
+            self.settings.overlay_locked = !self.settings.overlay_locked;
+            let _ = wsl_traffic_storage::save_settings(&self.settings);
+            if let Some(overlay_hwnd) = self.hwnd_overlay {
+                win_overlay::update_overlay_snapshot(
+                    overlay_hwnd,
+                    self.service.get_snapshot(),
+                    &self.settings,
+                );
+            }
         }
     }
 
     #[allow(unsafe_code)]
     fn on_destroy(&mut self, _hwnd: HWND) {
+        if let Some(overlay_hwnd) = self.hwnd_overlay.take() {
+            unsafe {
+                let _ = DestroyWindow(overlay_hwnd);
+            }
+        }
         if let Some(old_icon) = self.current_icon.take() {
             unsafe {
                 let _ = DestroyIcon(old_icon);
@@ -106,6 +138,10 @@ impl<P: NetworkProvider> TrayHandler for TrayStateImpl<P> {
         unsafe {
             PostQuitMessage(0);
         }
+    }
+
+    fn set_overlay_hwnd(&mut self, overlay_hwnd: HWND) {
+        self.hwnd_overlay = Some(overlay_hwnd);
     }
 }
 
@@ -179,6 +215,19 @@ unsafe extern "system" fn WndProc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: 
                 if let Ok(mut guard) = state.try_borrow_mut() {
                     if let Some(handler) = guard.as_mut() {
                         handler.on_command(hwnd, wparam);
+                    }
+                }
+            });
+            LRESULT(0)
+        }
+        WM_OVERLAY_RBUTTONUP => {
+            TRAY_STATE.with(|state| {
+                if let Ok(mut guard) = state.try_borrow_mut() {
+                    if let Some(handler) = guard.as_mut() {
+                        handler.on_tray_icon(
+                            hwnd,
+                            LPARAM(windows::Win32::UI::WindowsAndMessaging::WM_RBUTTONUP as isize),
+                        );
                     }
                 }
             });
@@ -415,6 +464,32 @@ fn show_context_menu<P: NetworkProvider>(
             PCWSTR(autostart_wide.as_ptr()),
         );
 
+        let overlay_text = if settings.show_overlay {
+            "✓ Show Floating Overlay"
+        } else {
+            "Show Floating Overlay"
+        };
+        let overlay_wide: Vec<u16> = overlay_text.encode_utf16().chain(Some(0)).collect();
+        let _ = AppendMenuW(
+            hmenu,
+            MF_STRING,
+            ID_TRAY_TOGGLE_OVERLAY,
+            PCWSTR(overlay_wide.as_ptr()),
+        );
+
+        let lock_text = if settings.overlay_locked {
+            "✓ Lock Overlay Position"
+        } else {
+            "Lock Overlay Position"
+        };
+        let lock_wide: Vec<u16> = lock_text.encode_utf16().chain(Some(0)).collect();
+        let _ = AppendMenuW(
+            hmenu,
+            MF_STRING,
+            ID_TRAY_LOCK_OVERLAY,
+            PCWSTR(lock_wide.as_ptr()),
+        );
+
         let settings_wide: Vec<u16> = "Settings...".encode_utf16().chain(Some(0)).collect();
         let _ = AppendMenuW(
             hmenu,
@@ -455,8 +530,9 @@ pub fn run_tray_ui<P: NetworkProvider>(
     TRAY_STATE.with(|state| {
         *state.borrow_mut() = Some(Box::new(TrayStateImpl {
             service,
-            settings,
+            settings: settings.clone(),
             current_icon: None,
+            hwnd_overlay: None,
         }));
     });
 
@@ -501,6 +577,17 @@ pub fn run_tray_ui<P: NetworkProvider>(
             None,
         )
         .map_err(|e| format!("Failed to create window: {e}"))?;
+
+        // Create the floating display overlay window
+        if let Ok(overlay_hwnd) = win_overlay::create_overlay_window(hwnd, &settings) {
+            TRAY_STATE.with(|state| {
+                if let Ok(mut guard) = state.try_borrow_mut() {
+                    if let Some(handler) = guard.as_mut() {
+                        handler.set_overlay_hwnd(overlay_hwnd);
+                    }
+                }
+            });
+        }
 
         let mut nid = NOTIFYICONDATAW {
             cbSize: std::mem::size_of::<NOTIFYICONDATAW>() as u32,
