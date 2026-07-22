@@ -37,7 +37,8 @@
 
 ## Phase 5: v1.0
 
-- [ ] Harden installer/autostart behavior.
-- [ ] Finalize storage migrations.
-- [ ] Finalize plugin architecture.
-- [ ] Add signed release pipeline.
+- [x] Harden autostart behavior (`is_autostart_enabled` query & path double-quoting).
+- [x] Add storage recovery policy (`redb` timestamped corruption fallback).
+- [x] Define plugin architecture design (`docs/plugin_architecture.md`).
+- [ ] Implement release build & SHA-256 checksum pipeline.
+- [ ] Implement code signing pipeline.

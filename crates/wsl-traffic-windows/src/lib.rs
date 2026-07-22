@@ -10,8 +10,8 @@ pub mod registry;
 pub use adapters::{RawInterfaceCounters, get_adapters, get_interface_counters};
 pub use processes::get_running_docker_processes;
 pub use registry::{
-    get_windows_version, get_wsl_distros_from_registry, is_docker_desktop_installed, is_elevated,
-    set_autostart,
+    get_windows_version, get_wsl_distros_from_registry, is_autostart_enabled,
+    is_docker_desktop_installed, is_elevated, set_autostart,
 };
 
 /// Returns whether this build target is Windows.
@@ -48,5 +48,10 @@ mod tests {
     #[test]
     fn test_set_autostart() {
         let _ = set_autostart(false);
+    }
+
+    #[test]
+    fn test_is_autostart_enabled() {
+        let _enabled = is_autostart_enabled();
     }
 }

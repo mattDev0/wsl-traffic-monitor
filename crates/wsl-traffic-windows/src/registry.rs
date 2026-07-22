@@ -352,3 +352,18 @@ pub fn set_autostart(enabled: bool) -> Result<(), String> {
         Ok(())
     }
 }
+
+/// Check if the application is configured to run at Windows startup.
+#[must_use]
+pub fn is_autostart_enabled() -> bool {
+    #[cfg(windows)]
+    {
+        use windows::Win32::System::Registry::HKEY_CURRENT_USER;
+        let subkey = r"Software\Microsoft\Windows\CurrentVersion\Run";
+        win::query_reg_string(HKEY_CURRENT_USER, subkey, "WslTrafficMonitor").is_some()
+    }
+    #[cfg(not(windows))]
+    {
+        false
+    }
+}

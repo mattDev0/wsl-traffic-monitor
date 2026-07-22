@@ -688,6 +688,7 @@ dependencies = [
  "serde_json",
  "thiserror",
  "time",
+ "tracing",
  "wsl-traffic-core",
 ]
 

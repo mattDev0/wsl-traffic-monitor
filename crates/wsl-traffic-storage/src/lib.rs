@@ -207,6 +207,32 @@ pub fn flush_history() -> Result<(), String> {
     Ok(())
 }
 
+fn open_or_recover_db(path: &PathBuf) -> Result<Database, String> {
+    if let Ok(db) = Database::create(path) {
+        Ok(db)
+    } else {
+        let now = time::OffsetDateTime::now_utc();
+        let timestamp = format!(
+            "{:04}{:02}{:02}_{:02}{:02}{:02}",
+            now.year(),
+            now.month() as u8,
+            now.day(),
+            now.hour(),
+            now.minute(),
+            now.second()
+        );
+        let bak_filename = format!("history_corrupt_{timestamp}.redb.bak");
+        let bak_path = path.with_file_name(bak_filename);
+        tracing::warn!(
+            "Failed to open history database at {:?}, archiving to {:?}",
+            path,
+            bak_path
+        );
+        let _ = fs::rename(path, bak_path);
+        Database::create(path).map_err(|e| e.to_string())
+    }
+}
+
 fn flush_to_db(up: u64, down: u64) -> Result<(), String> {
     if up == 0 && down == 0 {
         return Ok(());
@@ -220,8 +246,8 @@ fn flush_to_db(up: u64, down: u64) -> Result<(), String> {
         fs::create_dir_all(parent).map_err(|e| e.to_string())?;
     }
 
-    // Open/create database.
-    let db = Database::create(&db_path).map_err(|e| e.to_string())?;
+    // Open or recover database
+    let db = open_or_recover_db(&db_path)?;
     let write_txn = db.begin_write().map_err(|e| e.to_string())?;
 
     let now = time::OffsetDateTime::now_utc();
@@ -302,7 +328,16 @@ fn get_history_from_table(
         return Ok(Vec::new());
     }
 
-    let db = Database::open(&db_path).map_err(|e| e.to_string())?;
+    let db = match Database::open(&db_path) {
+        Ok(db) => db,
+        Err(e) => {
+            tracing::warn!(
+                "Could not open history database for reading at {:?}: {e}",
+                db_path
+            );
+            return Ok(Vec::new());
+        }
+    };
     let read_txn = db.begin_read().map_err(|e| e.to_string())?;
 
     let Ok(table) = read_txn.open_table(*table_def) else {
