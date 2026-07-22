@@ -157,7 +157,7 @@ impl<P: NetworkProvider> TrayStateImpl<P> {
 
         let new_icon = create_speed_icon(&down_text, &up_text);
 
-        let mut flags = NIF_TIP;
+        let mut flags = NIF_TIP | NIF_MESSAGE;
         let icon_to_set = if let Some(icon) = new_icon {
             flags |= NIF_ICON;
             icon
@@ -170,6 +170,7 @@ impl<P: NetworkProvider> TrayStateImpl<P> {
             hWnd: hwnd,
             uID: 1,
             uFlags: flags,
+            uCallbackMessage: WM_TRAY_ICON,
             hIcon: icon_to_set,
             ..Default::default()
         };
