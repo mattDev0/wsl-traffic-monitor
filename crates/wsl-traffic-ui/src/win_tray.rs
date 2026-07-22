@@ -36,6 +36,10 @@ const ID_TRAY_TOGGLE_OVERLAY: usize = 1009;
 const ID_TRAY_LOCK_OVERLAY: usize = 1010;
 const TRAY_TIMER_ID: usize = 1;
 
+use windows::Win32::UI::WindowsAndMessaging::RegisterWindowMessageW;
+
+static WM_TASKBARCREATED: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
+
 thread_local! {
     static TRAY_STATE: std::cell::RefCell<Option<Box<dyn TrayHandler>>> = const { std::cell::RefCell::new(None) };
 }
@@ -176,7 +180,11 @@ impl<P: NetworkProvider> TrayStateImpl<P> {
         nid.szTip[len] = 0;
 
         unsafe {
-            let _ = Shell_NotifyIconW(NIM_MODIFY, &nid);
+            let res = Shell_NotifyIconW(NIM_MODIFY, &nid);
+            if !res.as_bool() {
+                // If NIM_MODIFY failed (e.g. Explorer restarted), attempt to re-add the icon
+                let _ = Shell_NotifyIconW(NIM_ADD, &nid);
+            }
             if new_icon.is_some() {
                 if let Some(old_icon) = self.current_icon.take() {
                     let _ = DestroyIcon(old_icon);
@@ -243,7 +251,20 @@ unsafe extern "system" fn WndProc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: 
             });
             LRESULT(0)
         }
-        _ => unsafe { DefWindowProcW(hwnd, msg, wparam, lparam) },
+        _ => {
+            let taskbar_msg = WM_TASKBARCREATED.load(std::sync::atomic::Ordering::Relaxed);
+            if taskbar_msg != 0 && msg == taskbar_msg {
+                TRAY_STATE.with(|state| {
+                    if let Ok(mut guard) = state.try_borrow_mut() {
+                        if let Some(handler) = guard.as_mut() {
+                            handler.on_timer(hwnd);
+                        }
+                    }
+                });
+                return LRESULT(0);
+            }
+            unsafe { DefWindowProcW(hwnd, msg, wparam, lparam) }
+        }
     }
 }
 
@@ -537,6 +558,10 @@ pub fn run_tray_ui<P: NetworkProvider>(
     });
 
     unsafe {
+        // Register TaskbarCreated message to survive Explorer restarts
+        let taskbar_msg = RegisterWindowMessageW(w!("TaskbarCreated"));
+        WM_TASKBARCREATED.store(taskbar_msg, std::sync::atomic::Ordering::Relaxed);
+
         // Safety: retrieves module handle for the current running process to register window class.
         let instance = windows::Win32::System::LibraryLoader::GetModuleHandleW(PCWSTR::null())
             .map_err(|e| format!("Failed to get module handle: {e}"))?;

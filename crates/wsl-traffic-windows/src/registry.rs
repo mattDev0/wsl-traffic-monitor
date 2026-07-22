@@ -317,7 +317,7 @@ pub fn set_autostart(enabled: bool) -> Result<(), String> {
         if enabled {
             let exe_path = std::env::current_exe()
                 .map_err(|e| format!("Failed to get current executable path: {e}"))?;
-            let exe_str = exe_path.to_string_lossy().to_string();
+            let exe_str = format!("\"{}\"", exe_path.to_string_lossy());
             let exe_wide: Vec<u16> = exe_str.encode_utf16().chain(Some(0)).collect();
 
             let bytes = std::slice::from_raw_parts(
