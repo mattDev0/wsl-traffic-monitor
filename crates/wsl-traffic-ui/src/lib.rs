@@ -49,7 +49,12 @@ mod tests {
     fn test_win_tray_state_creation() {
         let service = wsl_traffic_monitor::WslTrafficMonitorService::new();
         let settings = wsl_traffic_storage::UserSettings::default();
-        let handler = win_tray::TrayStateImpl { service, settings };
+        let handler = win_tray::TrayStateImpl {
+            service,
+            settings,
+            current_icon: None,
+            hwnd_overlay: None,
+        };
         assert!(!handler.service.is_running());
     }
 }

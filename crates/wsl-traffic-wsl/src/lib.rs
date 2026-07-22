@@ -169,7 +169,7 @@ pub fn detect_wsl() -> WslInfo {
             cmd.args(args);
             cmd.stdout(std::process::Stdio::piped());
             cmd.stderr(std::process::Stdio::piped());
-            cmd.creation_flags(0x08000000); // CREATE_NO_WINDOW
+            cmd.creation_flags(0x0800_0000); // CREATE_NO_WINDOW
 
             let child = cmd.spawn().ok()?;
             let (tx, rx) = mpsc::channel();
@@ -186,7 +186,7 @@ pub fn detect_wsl() -> WslInfo {
                 // Timeout or error: forcibly kill the child process
                 let _ = Command::new("taskkill.exe")
                     .args(["/F", "/PID", &child_id.to_string()])
-                    .creation_flags(0x08000000) // CREATE_NO_WINDOW
+                    .creation_flags(0x0800_0000) // CREATE_NO_WINDOW
                     .output();
                 None
             }?;

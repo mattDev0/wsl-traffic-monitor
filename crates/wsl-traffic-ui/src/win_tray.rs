@@ -1,6 +1,16 @@
 //! Native Windows system tray UI implementation.
 #![cfg(windows)]
 #![allow(non_snake_case)]
+#![allow(
+    clippy::borrow_as_ptr,
+    clippy::cast_possible_truncation,
+    clippy::cast_possible_wrap,
+    clippy::cast_precision_loss,
+    clippy::cast_sign_loss,
+    clippy::needless_pass_by_value,
+    clippy::too_many_lines,
+    clippy::unreadable_literal
+)]
 
 use windows::Win32::Foundation::{HWND, LPARAM, LRESULT, WPARAM};
 use windows::Win32::UI::Shell::{
@@ -20,6 +30,7 @@ use wsl_traffic_core::{format_speed, format_speed_compact};
 use wsl_traffic_monitor::{NetworkProvider, WslTrafficMonitorService};
 
 use crate::win_overlay;
+use std::fmt::Write as _;
 
 const WM_TRAY_ICON: u32 = WM_USER + 1;
 const WM_OVERLAY_RBUTTONUP: u32 = WM_USER + 2;
@@ -91,7 +102,7 @@ impl<P: NetworkProvider> TrayHandler for TrayStateImpl<P> {
 
     #[allow(unsafe_code)]
     fn on_command(&mut self, hwnd: HWND, wparam: WPARAM) {
-        let control_id = (wparam.0 & 0xffff) as usize;
+        let control_id = wparam.0 & 0xffff;
         if control_id == ID_TRAY_EXIT {
             // Safety: hwnd is verified to be a valid handle before invocation.
             unsafe {
@@ -369,7 +380,7 @@ fn create_speed_icon(down_text: &str, up_text: &str) -> Option<HICON> {
             DT_CENTER | DT_SINGLELINE | DT_VCENTER,
         );
 
-        let _ = SelectObject(hdc_mem, old_font.into());
+        let _ = SelectObject(hdc_mem, old_font);
         let _ = DeleteObject(hfont.into());
         let _ = SelectObject(hdc_mem, old_bm);
         let _ = DeleteDC(hdc_mem);
@@ -749,7 +760,7 @@ fn show_history(hwnd: HWND) {
                 };
                 let up_str = format_bytes(up as f64);
                 let down_str = format_bytes(down as f64);
-                msg.push_str(&format!("{}: Up {}, Down {}\n", date_str, up_str, down_str));
+                let _ = writeln!(msg, "{date_str}: Up {up_str}, Down {down_str}");
             }
         }
         _ => {

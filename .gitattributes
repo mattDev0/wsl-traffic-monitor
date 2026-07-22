@@ -1,0 +1,17 @@
+# Keep source checkouts stable across Linux, WSL, and Windows runners.
+* text=auto eol=lf
+
+# Binary assets must never be line-ending normalized.
+*.ico binary
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.webp binary
+*.pdf binary
+*.zip binary
+*.7z binary
+*.msi binary
+*.exe binary
+*.dll binary
+*.pdb binary

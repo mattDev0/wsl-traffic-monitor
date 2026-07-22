@@ -1,6 +1,14 @@
 //! Floating display overlay window implementation for Windows.
 #![cfg(windows)]
 #![allow(non_snake_case)]
+#![allow(
+    clippy::borrow_as_ptr,
+    clippy::cast_possible_truncation,
+    clippy::cast_possible_wrap,
+    clippy::match_same_arms,
+    clippy::too_many_lines,
+    clippy::unreadable_literal
+)]
 
 use std::cell::RefCell;
 use windows::Win32::Foundation::{COLORREF, HWND, LPARAM, LRESULT, RECT, WPARAM};
@@ -170,7 +178,7 @@ unsafe extern "system" fn WndProcOverlay(
             let locked = OVERLAY_DATA.with(|data| {
                 data.borrow()
                     .as_ref()
-                    .map_or(false, |d| d.settings.overlay_locked)
+                    .is_some_and(|d| d.settings.overlay_locked)
             });
 
             if !locked {
