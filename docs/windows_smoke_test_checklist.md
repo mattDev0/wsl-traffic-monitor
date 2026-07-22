@@ -20,9 +20,9 @@ Run the application executable on a Windows host:
 | **1. Tray Startup** | Launch `wsl-traffic-monitor.exe` from PowerShell or File Explorer. | Tray icon loads in Windows System Tray area showing live speed text. Right-click context menu opens cleanly. | **PASS** |
 | **2. Overlay Mechanics** | - Drag floating overlay across monitors.<br>- Right-click -> *Lock Overlay Position* and attempt to drag.<br>- Right-click -> *Show Floating Overlay* to toggle visibility. | - Window moves smoothly without lag or paint tearing.<br>- Dragging is disabled when locked.<br>- Overlay hides/shows cleanly. | **PASS** |
 | **3. Settings Persistence** | Move overlay to $(X, Y)$, change speed unit in `settings.json` or toggle overlay, then restart app. | Overlay restores exact $(X, Y)$ position and visibility preferences from `settings.json`. | **PASS** |
-| **4. History Persistence (10-30m)** | Run continuous download/upload traffic for 15+ minutes, then check *View Usage History...*. | Hourly and daily byte totals accumulate correctly in `redb` database without locks or corruption. | **PENDING** |
+| **4. History Persistence (10-30m)** | Run continuous download/upload traffic for 15+ minutes, then check *View Usage History...*. | Hourly and daily byte totals accumulate correctly in `redb` database without locks or corruption. | **PASS** |
 | **5. WSL Lifecycle** | Run `wsl --shutdown` in PowerShell while app is running, then open WSL. | App transitions cleanly to `Disconnected` / `Offline`, then automatically reclassifies and reconnects when WSL restarts. | **PASS** |
-| **6. Explorer Restart** | In Task Manager or PowerShell: `Taskkill /F /IM explorer.exe` then `start explorer.exe`. | App handles `TaskbarCreated` message and re-registers tray icon and overlay window smoothly without crashing or leaking GDI objects. | **PENDING** |
+| **6. Explorer Restart** | In Task Manager or PowerShell: `Taskkill /F /IM explorer.exe` then `start explorer.exe`. | App handles `TaskbarCreated` message and re-registers tray icon and overlay window smoothly without crashing or leaking GDI objects. | **PASS** |
 | **7. Read-Only Config Safety** | Set `networkingMode=mirrored` in `%USERPROFILE%\.wslconfig` and restart app. | App detects mode, displays `[UNSUPPORTED]` overlay badge, and leaves `.wslconfig` **100% untouched**. | **PASS** |
 
 ---
