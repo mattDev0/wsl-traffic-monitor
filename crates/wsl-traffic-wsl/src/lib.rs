@@ -7,6 +7,9 @@
 //! It must NEVER automatically mutate `.wslconfig`, as changing networking modes
 //! (e.g., to mirrored) can destructively break user environments, firewalls, and VPNs.
 
+pub mod error;
+
+pub use error::WslError;
 use std::collections::HashMap;
 use std::fs::File;
 use std::io::{self, BufRead};
@@ -19,7 +22,7 @@ use wsl_traffic_core::{WslDistroInfo, WslInfo};
 /// Returns an error if reading the file fails.
 pub fn parse_ini_file<P: AsRef<Path>>(
     path: P,
-) -> io::Result<HashMap<String, HashMap<String, String>>> {
+) -> Result<HashMap<String, HashMap<String, String>>, WslError> {
     let file = File::open(path)?;
     let reader = io::BufReader::new(file);
     let mut config = HashMap::new();
