@@ -2,6 +2,9 @@
 //!
 //! Collects host, WSL, Docker, and adapter snapshots for support and validation reports.
 
+pub mod error;
+
+pub use error::DiagnosticsError;
 use std::fmt::Write;
 use wsl_traffic_core::DiagnosticsReport;
 
@@ -12,7 +15,7 @@ pub const DIAGNOSTICS_SCHEMA_VERSION: u16 = 0;
 ///
 /// # Errors
 /// Returns an error if querying host network adapters fails.
-pub fn generate_report() -> Result<DiagnosticsReport, String> {
+pub fn generate_report() -> Result<DiagnosticsReport, DiagnosticsError> {
     let windows_version = wsl_traffic_windows::get_windows_version();
     let wsl_info = wsl_traffic_wsl::detect_wsl();
     let docker_info = wsl_traffic_monitor::detect_docker(&wsl_info);
@@ -91,8 +94,8 @@ pub fn generate_report() -> Result<DiagnosticsReport, String> {
 ///
 /// # Errors
 /// Returns an error if JSON serialization fails.
-pub fn format_report_as_json(report: &DiagnosticsReport) -> Result<String, String> {
-    serde_json::to_string_pretty(report).map_err(|e| e.to_string())
+pub fn format_report_as_json(report: &DiagnosticsReport) -> Result<String, DiagnosticsError> {
+    Ok(serde_json::to_string_pretty(report)?)
 }
 
 /// Format the diagnostic report into a beautifully structured, human-readable text report.
