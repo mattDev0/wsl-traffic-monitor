@@ -2,6 +2,17 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.4.0] - 2026-07-21
+
+### Added
+- Implemented **Glanceable Floating Display Overlay**: Compact, borderless, dark glassmorphic card showing real-time upload/download throughput and confidence status (`[NAT: HIGH]`, `[NAT: MED]`, `[UNSUPPORTED]`).
+- Added **Overlay Interactions**: Draggable window placement with position persistence (`overlay_x`, `overlay_y`) saved to `settings.json`.
+- Added **Overlay Controls**: Toggle Show/Hide Floating Overlay and Lock Overlay Position via system tray and overlay right-click context menus.
+- Added **Phase 3 Read-Only Safety**: Explicit detection of `mirrored`, `virtioproxy`, and `none` modes in `.wslconfig`, transitioning the engine to `MonitorState::UnsupportedNetworkingMode` with a visual UI warning instead of silent failure or config mutation.
+
+### Fixed
+- Fixed an issue where the overlay window handle was not properly bound to `TrayStateImpl`, preventing timer updates and toggle commands.
+
 ## [0.3.0] - 2026-07-20
 
 ### Added
