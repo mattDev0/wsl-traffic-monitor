@@ -1,0 +1,81 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+env:
+  CARGO_TERM_COLOR: always
+  RUSTFLAGS: "-D warnings"
+
+jobs:
+  publish-release:
+    name: Build & Publish Release
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Install Rust Toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache Cargo Dependencies
+        uses: Swatinem/rust-cache@v2
+
+      - name: Verify Formatting
+        run: cargo fmt --all -- --check
+
+      - name: Run Clippy Lints
+        run: cargo clippy --workspace --all-targets -- -D warnings
+
+      - name: Run Workspace Tests
+        run: cargo test --workspace --all-targets
+
+      - name: Build Windows Release Binary
+        run: cargo build --release --package wsl-traffic-monitor-app
+
+      - name: Prepare Artifact Package
+        shell: powershell
+        run: |
+          $TAG = "${{ github.ref_name }}"
+          $ZIP_NAME = "wsl-traffic-monitor-$TAG-windows-x64.zip"
+          $EXE_PATH = "target/release/wsl-traffic-monitor.exe"
+          
+          # Create staging folder
+          New-Item -ItemType Directory -Path "dist_staging" -Force
+          Copy-Item $EXE_PATH -Destination "dist_staging\wsl-traffic-monitor.exe"
+          Copy-Item "README.md" -Destination "dist_staging\README.md"
+          Copy-Item "CHANGELOG.md" -Destination "dist_staging\CHANGELOG.md"
+          
+          # Zip staging folder
+          Compress-Archive -Path "dist_staging\*" -DestinationPath $ZIP_NAME -Force
+          
+          # Generate SHA256 Hash
+          $hash = (Get-FileHash -Algorithm SHA256 $ZIP_NAME).Hash.ToLower()
+          "$hash  $ZIP_NAME" | Out-File -Encoding ascii "SHA256SUMS.txt"
+          
+          echo "ZIP_NAME=$ZIP_NAME" >> $env:GITHUB_ENV
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            ${{ env.ZIP_NAME }}
+            SHA256SUMS.txt
+          body: |
+            ## WSL Traffic Monitor Release `${{ github.ref_name }}`
+
+            ### Verification & Integrity
+            - **Platform**: Windows x64 (`x86_64-pc-windows-msvc`)
+            - **Signing**: *Unsigned Release Binary* (Self-built via GitHub Actions CI)
+            - **Checksums**: See attached `SHA256SUMS.txt`
+
+            ### Artifacts
+            - `${{ env.ZIP_NAME }}`: Portable executable and documentation.
+          draft: false
+          prerelease: false

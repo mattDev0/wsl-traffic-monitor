@@ -40,5 +40,5 @@
 - [x] Harden autostart behavior (`is_autostart_enabled` query & path double-quoting).
 - [x] Add storage recovery policy (`redb` timestamped corruption fallback).
 - [x] Define plugin architecture design (`docs/plugin_architecture.md`).
-- [ ] Implement release build & SHA-256 checksum pipeline.
+- [x] Implement GitHub Actions release build & SHA-256 checksum pipeline (`.github/workflows/release.yml`).
 - [ ] Implement code signing pipeline.
