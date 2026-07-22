@@ -2,6 +2,10 @@
 
 #![deny(missing_docs)]
 
+pub mod error;
+
+pub use error::StorageError;
+
 use directories::ProjectDirs;
 use redb::{Database, ReadableTable, TableDefinition};
 use serde::{Deserialize, Serialize};
@@ -100,17 +104,17 @@ pub fn load_settings() -> UserSettings {
 ///
 /// # Errors
 /// Returns an error string if directory creation or file writing fails.
-pub fn save_settings(settings: &UserSettings) -> Result<(), String> {
+pub fn save_settings(settings: &UserSettings) -> Result<(), StorageError> {
     let Some(path) = get_settings_path() else {
-        return Err("Could not determine settings path".to_string());
+        return Err(StorageError::SettingsPathNotFound);
     };
 
     if let Some(parent) = path.parent() {
-        fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+        fs::create_dir_all(parent)?;
     }
 
-    let content = serde_json::to_string_pretty(settings).map_err(|e| e.to_string())?;
-    fs::write(path, content).map_err(|e| e.to_string())?;
+    let content = serde_json::to_string_pretty(settings)?;
+    fs::write(path, content)?;
     Ok(())
 }
 
@@ -158,7 +162,7 @@ fn unpack_totals(buf: [u8; 16]) -> (u64, u64) {
 /// # Errors
 /// Returns an error string if database flush fails.
 #[allow(clippy::missing_panics_doc)]
-pub fn record_usage(upload_bytes: u64, download_bytes: u64) -> Result<(), String> {
+pub fn record_usage(upload_bytes: u64, download_bytes: u64) -> Result<(), StorageError> {
     let mut lock = HISTORY_STATE.lock().unwrap();
     let state = lock.get_or_insert_with(|| HistoryState {
         pending_up: 0,
@@ -191,7 +195,7 @@ pub fn record_usage(upload_bytes: u64, download_bytes: u64) -> Result<(), String
 /// # Errors
 /// Returns an error string if database write fails.
 #[allow(clippy::missing_panics_doc)]
-pub fn flush_history() -> Result<(), String> {
+pub fn flush_history() -> Result<(), StorageError> {
     let mut lock = HISTORY_STATE.lock().unwrap();
     if let Some(state) = lock.as_mut() {
         let up = state.pending_up;
@@ -207,7 +211,7 @@ pub fn flush_history() -> Result<(), String> {
     Ok(())
 }
 
-fn open_or_recover_db(path: &PathBuf) -> Result<Database, String> {
+fn open_or_recover_db(path: &PathBuf) -> Result<Database, StorageError> {
     if let Ok(db) = Database::create(path) {
         Ok(db)
     } else {
@@ -229,26 +233,26 @@ fn open_or_recover_db(path: &PathBuf) -> Result<Database, String> {
             bak_path
         );
         let _ = fs::rename(path, bak_path);
-        Database::create(path).map_err(|e| e.to_string())
+        Ok(Database::create(path)?)
     }
 }
 
-fn flush_to_db(up: u64, down: u64) -> Result<(), String> {
+fn flush_to_db(up: u64, down: u64) -> Result<(), StorageError> {
     if up == 0 && down == 0 {
         return Ok(());
     }
 
     let Some(db_path) = get_history_db_path() else {
-        return Err("Could not determine history database path".to_string());
+        return Err(StorageError::HistoryDbPathNotFound);
     };
 
     if let Some(parent) = db_path.parent() {
-        fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+        fs::create_dir_all(parent)?;
     }
 
     // Open or recover database
     let db = open_or_recover_db(&db_path)?;
-    let write_txn = db.begin_write().map_err(|e| e.to_string())?;
+    let write_txn = db.begin_write()?;
 
     let now = time::OffsetDateTime::now_utc();
     let hour_key = format!(
@@ -267,37 +271,27 @@ fn flush_to_db(up: u64, down: u64) -> Result<(), String> {
 
     {
         // 1. Update hourly table
-        let mut hourly_table = write_txn
-            .open_table(HOURLY_TABLE)
-            .map_err(|e| e.to_string())?;
+        let mut hourly_table = write_txn.open_table(HOURLY_TABLE)?;
         let existing_hourly = hourly_table
-            .get(hour_key.as_str())
-            .map_err(|e| e.to_string())?
+            .get(hour_key.as_str())?
             .map_or((0, 0), |v| unpack_totals(v.value()));
-        hourly_table
-            .insert(
-                hour_key.as_str(),
-                &pack_totals(existing_hourly.0 + up, existing_hourly.1 + down),
-            )
-            .map_err(|e| e.to_string())?;
+        hourly_table.insert(
+            hour_key.as_str(),
+            &pack_totals(existing_hourly.0 + up, existing_hourly.1 + down),
+        )?;
 
         // 2. Update daily table
-        let mut daily_table = write_txn
-            .open_table(DAILY_TABLE)
-            .map_err(|e| e.to_string())?;
+        let mut daily_table = write_txn.open_table(DAILY_TABLE)?;
         let existing_daily = daily_table
-            .get(day_key.as_str())
-            .map_err(|e| e.to_string())?
+            .get(day_key.as_str())?
             .map_or((0, 0), |v| unpack_totals(v.value()));
-        daily_table
-            .insert(
-                day_key.as_str(),
-                &pack_totals(existing_daily.0 + up, existing_daily.1 + down),
-            )
-            .map_err(|e| e.to_string())?;
+        daily_table.insert(
+            day_key.as_str(),
+            &pack_totals(existing_daily.0 + up, existing_daily.1 + down),
+        )?;
     }
 
-    write_txn.commit().map_err(|e| e.to_string())?;
+    write_txn.commit()?;
     Ok(())
 }
 
@@ -305,7 +299,7 @@ fn flush_to_db(up: u64, down: u64) -> Result<(), String> {
 ///
 /// # Errors
 /// Returns an error string if database query fails.
-pub fn get_hourly_history(limit: usize) -> Result<Vec<(String, u64, u64)>, String> {
+pub fn get_hourly_history(limit: usize) -> Result<Vec<(String, u64, u64)>, StorageError> {
     get_history_from_table(&HOURLY_TABLE, limit)
 }
 
@@ -313,14 +307,14 @@ pub fn get_hourly_history(limit: usize) -> Result<Vec<(String, u64, u64)>, Strin
 ///
 /// # Errors
 /// Returns an error string if database query fails.
-pub fn get_daily_history(limit: usize) -> Result<Vec<(String, u64, u64)>, String> {
+pub fn get_daily_history(limit: usize) -> Result<Vec<(String, u64, u64)>, StorageError> {
     get_history_from_table(&DAILY_TABLE, limit)
 }
 
 fn get_history_from_table(
     table_def: &TableDefinition<&str, [u8; 16]>,
     limit: usize,
-) -> Result<Vec<(String, u64, u64)>, String> {
+) -> Result<Vec<(String, u64, u64)>, StorageError> {
     let Some(db_path) = get_history_db_path() else {
         return Ok(Vec::new());
     };
@@ -338,16 +332,16 @@ fn get_history_from_table(
             return Ok(Vec::new());
         }
     };
-    let read_txn = db.begin_read().map_err(|e| e.to_string())?;
+    let read_txn = db.begin_read()?;
 
     let Ok(table) = read_txn.open_table(*table_def) else {
         return Ok(Vec::new());
     };
 
     let mut results = Vec::new();
-    let range = table.iter().map_err(|e| e.to_string())?;
+    let range = table.iter()?;
     for item in range {
-        let (key, val) = item.map_err(|e| e.to_string())?;
+        let (key, val) = item?;
         let (up, down) = unpack_totals(val.value());
         results.push((key.value().to_string(), up, down));
     }
