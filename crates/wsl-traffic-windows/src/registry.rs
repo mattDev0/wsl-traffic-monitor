@@ -281,12 +281,14 @@ pub fn is_elevated() -> bool {
     }
 }
 
+use crate::WindowsError;
+
 /// Register or unregister the application for autostart on Windows.
 ///
 /// # Errors
 /// Returns an error string if writing to registry fails.
 #[allow(unsafe_code)]
-pub fn set_autostart(enabled: bool) -> Result<(), String> {
+pub fn set_autostart(enabled: bool) -> Result<(), WindowsError> {
     #[cfg(windows)]
     unsafe {
         use windows::Win32::System::Registry::{
@@ -311,12 +313,16 @@ pub fn set_autostart(enabled: bool) -> Result<(), String> {
         );
 
         if result.is_err() {
-            return Err(format!("Failed to open Run registry key: {:?}", result));
+            return Err(WindowsError::OpenRunRegistryKeyFailed {
+                details: format!("{:?}", result),
+            });
         }
 
         if enabled {
-            let exe_path = std::env::current_exe()
-                .map_err(|e| format!("Failed to get current executable path: {e}"))?;
+            let exe_path =
+                std::env::current_exe().map_err(|e| WindowsError::CurrentExePathFailed {
+                    details: e.to_string(),
+                })?;
             let exe_str = format!("\"{}\"", exe_path.to_string_lossy());
             let exe_wide: Vec<u16> = exe_str.encode_utf16().chain(Some(0)).collect();
 
@@ -331,10 +337,9 @@ pub fn set_autostart(enabled: bool) -> Result<(), String> {
             let _ = RegCloseKey(hkey);
 
             if set_result.is_err() {
-                return Err(format!(
-                    "Failed to write autostart registry value: {:?}",
-                    set_result
-                ));
+                return Err(WindowsError::WriteAutostartRegistryValueFailed {
+                    details: format!("{:?}", set_result),
+                });
             }
         } else {
             let del_result = RegDeleteValueW(hkey, PCWSTR(value_name.as_ptr()));

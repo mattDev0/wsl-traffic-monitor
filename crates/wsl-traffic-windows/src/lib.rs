@@ -4,10 +4,12 @@
 //! Exposes Win32 IP Helper wrappers, process queries, and registry checks.
 
 pub mod adapters;
+pub mod error;
 pub mod processes;
 pub mod registry;
 
 pub use adapters::{RawInterfaceCounters, get_adapters, get_interface_counters};
+pub use error::WindowsError;
 pub use processes::get_running_docker_processes;
 pub use registry::{
     get_windows_version, get_wsl_distros_from_registry, is_autostart_enabled,

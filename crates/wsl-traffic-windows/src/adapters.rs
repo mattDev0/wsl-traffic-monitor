@@ -1,5 +1,6 @@
 //! Network adapter enumeration using Windows IP Helper API.
 
+use crate::WindowsError;
 use wsl_traffic_core::AdapterInfo;
 
 /// Query all network adapters on the host.
@@ -8,7 +9,7 @@ use wsl_traffic_core::AdapterInfo;
 /// Returns an error string if querying IP Helper APIs fails.
 #[allow(clippy::too_many_lines)]
 #[allow(unsafe_code)]
-pub fn get_adapters() -> Result<Vec<AdapterInfo>, String> {
+pub fn get_adapters() -> Result<Vec<AdapterInfo>, WindowsError> {
     #[cfg(windows)]
     {
         use windows::Win32::Foundation::{ERROR_BUFFER_OVERFLOW, ERROR_SUCCESS};
@@ -44,9 +45,7 @@ pub fn get_adapters() -> Result<Vec<AdapterInfo>, String> {
             }
 
             if ret != ERROR_SUCCESS.0 {
-                return Err(format!(
-                    "GetAdaptersAddresses failed with error code: {ret}"
-                ));
+                return Err(WindowsError::GetAdaptersAddressesFailed { code: ret });
             }
 
             let mut adapters = Vec::new();
@@ -242,7 +241,7 @@ pub struct RawInterfaceCounters {
 /// # Errors
 /// Returns an error string if the interface is not found or querying fails.
 #[allow(unsafe_code)]
-pub fn get_interface_counters(luid: u64) -> Result<RawInterfaceCounters, String> {
+pub fn get_interface_counters(luid: u64) -> Result<RawInterfaceCounters, WindowsError> {
     #[cfg(windows)]
     {
         use windows::Win32::Foundation::ERROR_SUCCESS;
@@ -261,10 +260,7 @@ pub fn get_interface_counters(luid: u64) -> Result<RawInterfaceCounters, String>
                     packets_recv: row.InUcastPkts + row.InNUcastPkts,
                 })
             } else {
-                Err(format!(
-                    "GetIfEntry2 failed for LUID {luid} with error code {}",
-                    res.0
-                ))
+                Err(WindowsError::GetIfEntry2Failed { luid, code: res.0 })
             }
         }
     }
@@ -273,10 +269,10 @@ pub fn get_interface_counters(luid: u64) -> Result<RawInterfaceCounters, String>
         // Mock implementation for Linux development/testing
         if luid == 123_456_789 {
             Ok(RawInterfaceCounters {
-                bytes_sent: 1024 * 512,
+                bytes_sent: 1024 * 1024 * 5,
                 bytes_recv: 1024 * 1024 * 20,
-                packets_sent: 5000,
-                packets_recv: 20000,
+                packets_sent: 50_000,
+                packets_recv: 200_000,
             })
         } else if luid == 987_654_321 {
             Ok(RawInterfaceCounters {
@@ -286,7 +282,7 @@ pub fn get_interface_counters(luid: u64) -> Result<RawInterfaceCounters, String>
                 packets_recv: 500_000,
             })
         } else {
-            Err(format!("LUID {luid} not found"))
+            Err(WindowsError::GetIfEntry2Failed { luid, code: 2 })
         }
     }
 }
