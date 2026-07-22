@@ -45,14 +45,18 @@ pub struct OverlayData {
     pub settings: wsl_traffic_storage::UserSettings,
 }
 
+use crate::UiError;
+
 /// Create the floating overlay window.
 #[allow(unsafe_code)]
 pub fn create_overlay_window(
     hwnd_tray: HWND,
     settings: &wsl_traffic_storage::UserSettings,
-) -> Result<HWND, String> {
+) -> Result<HWND, UiError> {
     let instance = unsafe { windows::Win32::System::LibraryLoader::GetModuleHandleW(None) }
-        .map_err(|e| format!("Failed to get module handle: {e}"))?;
+        .map_err(|e| UiError::WindowCreationFailed {
+            details: format!("GetModuleHandleW failed: {e}"),
+        })?;
 
     let class_name = w!("WSLTrafficOverlayClass");
 
@@ -98,7 +102,9 @@ pub fn create_overlay_window(
             None,
         )
     }
-    .map_err(|e| format!("Failed to create overlay window: {e}"))?;
+    .map_err(|e| UiError::WindowCreationFailed {
+        details: format!("Failed to create overlay window: {e}"),
+    })?;
 
     // Store state
     OVERLAY_DATA.with(|data| {

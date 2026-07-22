@@ -2,6 +2,9 @@
 
 #![deny(missing_docs)]
 
+pub mod error;
+
+pub use error::UiError;
 use wsl_traffic_monitor::NetworkProvider;
 
 #[cfg(windows)]
@@ -18,7 +21,7 @@ mod win_tray;
 pub fn run_ui<P: NetworkProvider>(
     service: wsl_traffic_monitor::WslTrafficMonitorService<P>,
     settings: wsl_traffic_storage::UserSettings,
-) -> Result<(), String> {
+) -> Result<(), UiError> {
     #[cfg(windows)]
     {
         win_tray::run_tray_ui(service, settings)

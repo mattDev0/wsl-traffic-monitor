@@ -554,12 +554,14 @@ fn show_context_menu<P: NetworkProvider>(
     }
 }
 
+use crate::UiError;
+
 /// Start the Win32 message loop window and load the tray notification icon.
 #[allow(unsafe_code)]
 pub fn run_tray_ui<P: NetworkProvider>(
     service: WslTrafficMonitorService<P>,
     settings: wsl_traffic_storage::UserSettings,
-) -> Result<(), String> {
+) -> Result<(), UiError> {
     TRAY_STATE.with(|state| {
         *state.borrow_mut() = Some(Box::new(TrayStateImpl {
             service,
@@ -576,7 +578,9 @@ pub fn run_tray_ui<P: NetworkProvider>(
 
         // Safety: retrieves module handle for the current running process to register window class.
         let instance = windows::Win32::System::LibraryLoader::GetModuleHandleW(PCWSTR::null())
-            .map_err(|e| format!("Failed to get module handle: {e}"))?;
+            .map_err(|e| UiError::WindowCreationFailed {
+                details: format!("GetModuleHandleW failed: {e}"),
+            })?;
 
         let class_name: Vec<u16> = "WSLTrafficMonitorClass"
             .encode_utf16()
@@ -595,7 +599,9 @@ pub fn run_tray_ui<P: NetworkProvider>(
         // Safety: registers class for the utility window.
         let atom = RegisterClassW(&wnd_class);
         if atom == 0 {
-            return Err("Failed to register window class".to_string());
+            return Err(UiError::WindowClassRegistrationFailed {
+                details: "RegisterClassW returned 0".to_string(),
+            });
         }
 
         // Safety: CreateWindowExW creates a hidden window to anchor standard messages.
@@ -613,7 +619,9 @@ pub fn run_tray_ui<P: NetworkProvider>(
             Some(windows::Win32::Foundation::HINSTANCE(instance.0)),
             None,
         )
-        .map_err(|e| format!("Failed to create window: {e}"))?;
+        .map_err(|e| UiError::WindowCreationFailed {
+            details: format!("{e}"),
+        })?;
 
         // Create the floating display overlay window
         if let Ok(overlay_hwnd) = win_overlay::create_overlay_window(hwnd, &settings) {
@@ -643,14 +651,16 @@ pub fn run_tray_ui<P: NetworkProvider>(
         // Safety: Shell_NotifyIconW mounts the notification icon in the tray.
         let res = Shell_NotifyIconW(NIM_ADD, &nid);
         if !res.as_bool() {
-            return Err("Failed to add tray icon".to_string());
+            return Err(UiError::TrayIconInitializationFailed);
         }
 
         // Safety: SetTimer schedules 1-second ticks in WndProc timer.
         let timer = SetTimer(Some(hwnd), TRAY_TIMER_ID, 1000, None);
         if timer == 0 {
             let _ = Shell_NotifyIconW(NIM_DELETE, &nid);
-            return Err("Failed to create timer".to_string());
+            return Err(UiError::WindowCreationFailed {
+                details: "Failed to create timer".to_string(),
+            });
         }
 
         let mut msg = windows::Win32::UI::WindowsAndMessaging::MSG::default();

@@ -8,6 +8,7 @@ authors.workspace = true
 description = "Native Windows UI boundary for WSL Traffic Monitor."
 
 [dependencies]
+thiserror.workspace = true
 tracing.workspace = true
 wsl-traffic-core.workspace = true
 wsl-traffic-monitor.workspace = true

@@ -634,6 +634,7 @@ version = "0.1.0"
 dependencies = [
  "serde",
  "serde_json",
+ "thiserror",
  "time",
  "wsl-traffic-core",
  "wsl-traffic-monitor",
@@ -697,6 +698,7 @@ name = "wsl-traffic-ui"
 version = "0.1.0"
 dependencies = [
  "directories",
+ "thiserror",
  "tracing",
  "windows",
  "wsl-traffic-core",
