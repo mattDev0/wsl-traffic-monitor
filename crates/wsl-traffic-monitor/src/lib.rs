@@ -2,6 +2,10 @@
 //!
 //! Evaluates candidate network interfaces for WSL traffic monitoring suitability.
 
+pub mod error;
+
+pub use error::MonitorError;
+
 use wsl_traffic_core::{
     AdapterInfo, CandidateClassification, DockerInfo, MeasurementConfidence, TrafficSample, WslInfo,
 };
@@ -211,7 +215,7 @@ pub trait NetworkProvider: Send + 'static {
     ///
     /// # Errors
     /// Returns an error if querying host adapters fails.
-    fn get_adapters(&self) -> Result<Vec<AdapterInfo>, String>;
+    fn get_adapters(&self) -> Result<Vec<AdapterInfo>, MonitorError>;
     /// Query raw counters for a specific network interface.
     ///
     /// # Errors
@@ -219,7 +223,7 @@ pub trait NetworkProvider: Send + 'static {
     fn get_interface_counters(
         &self,
         luid: u64,
-    ) -> Result<wsl_traffic_windows::RawInterfaceCounters, String>;
+    ) -> Result<wsl_traffic_windows::RawInterfaceCounters, MonitorError>;
     /// Detect the WSL installation state.
     fn detect_wsl(&self) -> WslInfo;
     /// Query Docker Desktop integration state.
@@ -230,15 +234,15 @@ pub trait NetworkProvider: Send + 'static {
 pub struct SystemNetworkProvider;
 
 impl NetworkProvider for SystemNetworkProvider {
-    fn get_adapters(&self) -> Result<Vec<AdapterInfo>, String> {
-        wsl_traffic_windows::get_adapters()
+    fn get_adapters(&self) -> Result<Vec<AdapterInfo>, MonitorError> {
+        Ok(wsl_traffic_windows::get_adapters()?)
     }
 
     fn get_interface_counters(
         &self,
         luid: u64,
-    ) -> Result<wsl_traffic_windows::RawInterfaceCounters, String> {
-        wsl_traffic_windows::get_interface_counters(luid)
+    ) -> Result<wsl_traffic_windows::RawInterfaceCounters, MonitorError> {
+        Ok(wsl_traffic_windows::get_interface_counters(luid)?)
     }
 
     fn detect_wsl(&self) -> WslInfo {
@@ -671,9 +675,9 @@ impl<P: NetworkProvider> WslTrafficMonitorService<P> {
     ///
     /// # Errors
     /// Returns an error if the monitor service is already running.
-    pub fn start(&mut self, interval: std::time::Duration) -> Result<(), String> {
+    pub fn start(&mut self, interval: std::time::Duration) -> Result<(), MonitorError> {
         if self.active_monitor.is_some() {
-            return Err("Monitor service is already running".to_string());
+            return Err(MonitorError::AlreadyRunning);
         }
 
         let monitor = self.monitor.clone();
@@ -882,19 +886,21 @@ mod tests {
     }
 
     impl NetworkProvider for MockNetworkProvider {
-        fn get_adapters(&self) -> Result<Vec<AdapterInfo>, String> {
+        fn get_adapters(&self) -> Result<Vec<AdapterInfo>, MonitorError> {
             Ok(self.adapters.lock().unwrap().clone())
         }
 
         fn get_interface_counters(
             &self,
             luid: u64,
-        ) -> Result<wsl_traffic_windows::RawInterfaceCounters, String> {
+        ) -> Result<wsl_traffic_windows::RawInterfaceCounters, MonitorError> {
             let counters_map = self.counters.lock().unwrap();
             if let Some(c) = counters_map.get(&luid) {
                 Ok(*c)
             } else {
-                Err("LUID not found".to_string())
+                Err(MonitorError::Windows(
+                    wsl_traffic_windows::WindowsError::GetIfEntry2Failed { luid, code: 2 },
+                ))
             }
         }
 
@@ -1436,9 +1442,9 @@ mod tests {
         assert!(res.is_ok());
         assert!(service.is_running());
 
-        // Try to start again - should fail
+        // Try to start again - should fail with MonitorError::AlreadyRunning
         let res_twice = service.start(std::time::Duration::from_millis(50));
-        assert!(res_twice.is_err());
+        assert!(matches!(res_twice, Err(MonitorError::AlreadyRunning)));
 
         // Sleep to let background thread tick
         std::thread::sleep(std::time::Duration::from_millis(150));
