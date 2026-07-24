@@ -15,8 +15,8 @@ use windows::Win32::Foundation::{COLORREF, HWND, LPARAM, LRESULT, RECT, WPARAM};
 use windows::Win32::Graphics::Gdi::{
     BeginPaint, CreateCompatibleBitmap, CreateCompatibleDC, CreateFontW, CreateSolidBrush, DT_LEFT,
     DT_SINGLELINE, DT_VCENTER, DeleteDC, DeleteObject, DrawTextW, EndPaint, FONT_CHARSET,
-    FONT_CLIP_PRECISION, FONT_OUTPUT_PRECISION, FONT_QUALITY, FW_BOLD, FillRect, PAINTSTRUCT,
-    SRCCOPY, SelectObject, SetBkMode, SetTextColor, TRANSPARENT,
+    FONT_CLIP_PRECISION, FONT_OUTPUT_PRECISION, FW_BOLD, FillRect, PAINTSTRUCT, SRCCOPY,
+    SelectObject, SetBkMode, SetTextColor, TRANSPARENT,
 };
 use windows::Win32::UI::Input::KeyboardAndMouse::ReleaseCapture;
 use windows::Win32::UI::WindowsAndMessaging::{
@@ -31,8 +31,8 @@ use wsl_traffic_core::MeasurementConfidence;
 use wsl_traffic_core::format_speed_compact;
 use wsl_traffic_monitor::{MonitorState, MonitorStateSnapshot};
 
-const OVERLAY_WIDTH: i32 = 148;
-const OVERLAY_HEIGHT: i32 = 54;
+const BASE_OVERLAY_WIDTH: i32 = 160;
+const BASE_OVERLAY_HEIGHT: i32 = 58;
 const WM_OVERLAY_RBUTTONUP: u32 = WM_USER + 2;
 
 thread_local! {
@@ -46,6 +46,14 @@ pub struct OverlayData {
 }
 
 use crate::UiError;
+
+#[allow(unsafe_code)]
+fn get_dpi_for_window(hwnd: HWND) -> u32 {
+    unsafe {
+        let dpi = windows::Win32::UI::HiDpi::GetDpiForWindow(hwnd);
+        if dpi == 0 { 96 } else { dpi }
+    }
+}
 
 /// Create the floating overlay window.
 #[allow(unsafe_code)]
@@ -72,6 +80,14 @@ pub fn create_overlay_window(
         RegisterClassW(&wnd_class);
     }
 
+    let dpi = unsafe {
+        let d = windows::Win32::UI::HiDpi::GetDpiForSystem();
+        if d == 0 { 96 } else { d }
+    };
+
+    let overlay_w = ((BASE_OVERLAY_WIDTH * dpi as i32) + 48) / 96;
+    let overlay_h = ((BASE_OVERLAY_HEIGHT * dpi as i32) + 48) / 96;
+
     // Calculate default position (bottom-right above taskbar) if not saved
     let (x, y) = if settings.overlay_x >= 0 && settings.overlay_y >= 0 {
         (settings.overlay_x, settings.overlay_y)
@@ -79,10 +95,7 @@ pub fn create_overlay_window(
         unsafe {
             let screen_w = GetSystemMetrics(SM_CXSCREEN);
             let screen_h = GetSystemMetrics(SM_CYSCREEN);
-            (
-                screen_w - OVERLAY_WIDTH - 20,
-                screen_h - OVERLAY_HEIGHT - 60,
-            )
+            (screen_w - overlay_w - 20, screen_h - overlay_h - 60)
         }
     };
 
@@ -94,8 +107,8 @@ pub fn create_overlay_window(
             WS_POPUP,
             x,
             y,
-            OVERLAY_WIDTH,
-            OVERLAY_HEIGHT,
+            overlay_w,
+            overlay_h,
             None,
             None,
             Some(windows::Win32::Foundation::HINSTANCE(instance.0)),
@@ -245,25 +258,35 @@ unsafe extern "system" fn WndProcOverlay(
             LRESULT(0)
         }
 
-        WM_DESTROY => unsafe { DefWindowProcW(hwnd, msg, wparam, lparam) },
+        WM_DESTROY => {
+            OVERLAY_DATA.with(|data| {
+                *data.borrow_mut() = None;
+            });
+            unsafe { DefWindowProcW(hwnd, msg, wparam, lparam) }
+        }
 
         _ => unsafe { DefWindowProcW(hwnd, msg, wparam, lparam) },
     }
 }
 
 #[allow(unsafe_code)]
-fn paint_overlay(_hwnd: HWND, hdc: windows::Win32::Graphics::Gdi::HDC) {
-    let rect = RECT {
-        left: 0,
-        top: 0,
-        right: OVERLAY_WIDTH,
-        bottom: OVERLAY_HEIGHT,
-    };
+fn paint_overlay(hwnd: HWND, hdc: windows::Win32::Graphics::Gdi::HDC) {
+    let mut rect = RECT::default();
+    unsafe {
+        let _ = windows::Win32::UI::WindowsAndMessaging::GetClientRect(hwnd, &mut rect);
+    }
+    let width = rect.right - rect.left;
+    let height = rect.bottom - rect.top;
+    if width <= 0 || height <= 0 {
+        return;
+    }
+
+    let dpi = get_dpi_for_window(hwnd);
 
     // Double buffering to eliminate flicker
     unsafe {
         let hdc_mem = CreateCompatibleDC(Some(hdc));
-        let hbm_mem = CreateCompatibleBitmap(hdc, OVERLAY_WIDTH, OVERLAY_HEIGHT);
+        let hbm_mem = CreateCompatibleBitmap(hdc, width, height);
         let old_bm = SelectObject(hdc_mem, hbm_mem.into());
 
         // Background brush - sleek dark glass card (RGB: 20, 24, 32 -> 0x00201814 in COLORREF)
@@ -290,10 +313,14 @@ fn paint_overlay(_hwnd: HWND, hdc: windows::Win32::Graphics::Gdi::HDC) {
                 MonitorState::Disconnected => ("WSL  [OFFLINE]", COLORREF(0x00808080)), // Muted Gray
             };
 
+            // Dynamic font height scaling using standard GDI MulDiv: - (pt * dpi) / 72
+            let header_font_h = -(((9 * dpi as i32) + 36) / 72);
+            let speed_font_h = -(((11 * dpi as i32) + 36) / 72);
+
             // 1. Render Header (WSL + Badge)
             let font_header_name: Vec<u16> = "Segoe UI".encode_utf16().chain(Some(0)).collect();
             let hfont_header = CreateFontW(
-                11,
+                header_font_h,
                 0,
                 0,
                 0,
@@ -304,17 +331,21 @@ fn paint_overlay(_hwnd: HWND, hdc: windows::Win32::Graphics::Gdi::HDC) {
                 FONT_CHARSET(0),
                 FONT_OUTPUT_PRECISION(0),
                 FONT_CLIP_PRECISION(0),
-                FONT_QUALITY(0),
+                windows::Win32::Graphics::Gdi::CLEARTYPE_QUALITY,
                 0,
                 PCWSTR(font_header_name.as_ptr()),
             );
             let old_font = SelectObject(hdc_mem, hfont_header.into());
 
+            let pad_x = ((8 * dpi as i32) + 48) / 96;
+            let header_h = ((16 * dpi as i32) + 48) / 96;
+            let row_h = ((18 * dpi as i32) + 48) / 96;
+
             let mut header_rect = RECT {
-                left: 8,
+                left: pad_x,
                 top: 4,
-                right: OVERLAY_WIDTH - 8,
-                bottom: 18,
+                right: width - pad_x,
+                bottom: 4 + header_h,
             };
             let _ = SetTextColor(hdc_mem, badge_color);
             let mut header_wide: Vec<u16> = badge_text.encode_utf16().chain(Some(0)).collect();
@@ -329,7 +360,7 @@ fn paint_overlay(_hwnd: HWND, hdc: windows::Win32::Graphics::Gdi::HDC) {
             // 2. Render Speeds (Download Cyan, Upload Amber)
             let font_speed_name: Vec<u16> = "Segoe UI".encode_utf16().chain(Some(0)).collect();
             let hfont_speed = CreateFontW(
-                13,
+                speed_font_h,
                 0,
                 0,
                 0,
@@ -340,7 +371,7 @@ fn paint_overlay(_hwnd: HWND, hdc: windows::Win32::Graphics::Gdi::HDC) {
                 FONT_CHARSET(0),
                 FONT_OUTPUT_PRECISION(0),
                 FONT_CLIP_PRECISION(0),
-                FONT_QUALITY(0),
+                windows::Win32::Graphics::Gdi::CLEARTYPE_QUALITY,
                 0,
                 PCWSTR(font_speed_name.as_ptr()),
             );
@@ -351,16 +382,16 @@ fn paint_overlay(_hwnd: HWND, hdc: windows::Win32::Graphics::Gdi::HDC) {
             let up_str = format!("U  {}", format_speed_compact(d.snapshot.upload_speed));
 
             let mut down_rect = RECT {
-                left: 8,
-                top: 20,
-                right: OVERLAY_WIDTH - 8,
-                bottom: 35,
+                left: pad_x,
+                top: 4 + header_h + 2,
+                right: width - pad_x,
+                bottom: 4 + header_h + 2 + row_h,
             };
             let mut up_rect = RECT {
-                left: 8,
-                top: 35,
-                right: OVERLAY_WIDTH - 8,
-                bottom: 50,
+                left: pad_x,
+                top: 4 + header_h + 2 + row_h,
+                right: width - pad_x,
+                bottom: 4 + header_h + 2 + (row_h * 2),
             };
 
             // Cyan for download (0x00FFDC00)
@@ -394,8 +425,8 @@ fn paint_overlay(_hwnd: HWND, hdc: windows::Win32::Graphics::Gdi::HDC) {
             hdc,
             0,
             0,
-            OVERLAY_WIDTH,
-            OVERLAY_HEIGHT,
+            width,
+            height,
             Some(hdc_mem),
             0,
             0,

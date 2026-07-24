@@ -1,4 +1,5 @@
 //! Application entry point for WSL Traffic Monitor.
+#![windows_subsystem = "windows"]
 
 use std::env;
 use std::process;
@@ -8,6 +9,15 @@ use wsl_traffic_diagnostics::{format_report_as_json, format_report_as_text, gene
 
 fn main() {
     let args: Vec<String> = env::args().collect();
+
+    if args.len() > 1 {
+        #[cfg(windows)]
+        #[allow(unsafe_code)]
+        unsafe {
+            use windows::Win32::System::Console::{ATTACH_PARENT_PROCESS, AttachConsole};
+            let _ = AttachConsole(ATTACH_PARENT_PROCESS);
+        }
+    }
 
     let mut print_json = false;
     let mut run_diagnostics = false;

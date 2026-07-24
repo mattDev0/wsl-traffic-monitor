@@ -261,6 +261,9 @@ unsafe extern "system" fn WndProc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: 
                     }
                 }
             });
+            unsafe {
+                windows::Win32::UI::WindowsAndMessaging::PostQuitMessage(0);
+            }
             LRESULT(0)
         }
         _ => {
@@ -286,8 +289,8 @@ fn create_speed_icon(down_text: &str, up_text: &str) -> Option<HICON> {
     use windows::Win32::Graphics::Gdi::{
         CreateCompatibleBitmap, CreateCompatibleDC, CreateFontW, DT_CENTER, DT_SINGLELINE,
         DT_VCENTER, DeleteDC, DeleteObject, DrawTextW, FONT_CHARSET, FONT_CLIP_PRECISION,
-        FONT_OUTPUT_PRECISION, FONT_QUALITY, FW_BOLD, GetDC, ReleaseDC, SelectObject, SetBkMode,
-        SetTextColor, TRANSPARENT,
+        FONT_OUTPUT_PRECISION, FW_BOLD, GetDC, ReleaseDC, SelectObject, SetBkMode, SetTextColor,
+        TRANSPARENT,
     };
     use windows::Win32::UI::WindowsAndMessaging::{CreateIconIndirect, ICONINFO};
 
@@ -326,7 +329,7 @@ fn create_speed_icon(down_text: &str, up_text: &str) -> Option<HICON> {
 
         let font_name: Vec<u16> = "Segoe UI".encode_utf16().chain(Some(0)).collect();
         let hfont = CreateFontW(
-            13,
+            -13,
             0,
             0,
             0,
@@ -337,7 +340,7 @@ fn create_speed_icon(down_text: &str, up_text: &str) -> Option<HICON> {
             FONT_CHARSET(0),
             FONT_OUTPUT_PRECISION(0),
             FONT_CLIP_PRECISION(0),
-            FONT_QUALITY(0),
+            windows::Win32::Graphics::Gdi::CLEARTYPE_QUALITY,
             0,
             PCWSTR(font_name.as_ptr()),
         );
@@ -572,6 +575,11 @@ pub fn run_tray_ui<P: NetworkProvider>(
     });
 
     unsafe {
+        // Enable Per-Monitor V2 DPI Awareness for crisp, un-scaled text and windows
+        let _ = windows::Win32::UI::HiDpi::SetProcessDpiAwarenessContext(
+            windows::Win32::UI::HiDpi::DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2,
+        );
+
         // Register TaskbarCreated message to survive Explorer restarts
         let taskbar_msg = RegisterWindowMessageW(w!("TaskbarCreated"));
         WM_TASKBARCREATED.store(taskbar_msg, std::sync::atomic::Ordering::Relaxed);

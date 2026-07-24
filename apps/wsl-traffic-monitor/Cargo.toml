@@ -23,5 +23,10 @@ wsl-traffic-ui.workspace = true
 wsl-traffic-windows.workspace = true
 wsl-traffic-wsl.workspace = true
 
+[target.'cfg(windows)'.dependencies]
+windows = { workspace = true, features = [
+    "Win32_System_Console"
+] }
+
 [lints]
 workspace = true

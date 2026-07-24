@@ -670,6 +670,7 @@ version = "0.1.0"
 dependencies = [
  "tracing",
  "tracing-subscriber",
+ "windows",
  "wsl-traffic-core",
  "wsl-traffic-diagnostics",
  "wsl-traffic-monitor",
