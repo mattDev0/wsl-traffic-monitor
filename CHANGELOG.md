@@ -2,6 +2,18 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.5.0] - 2026-07-24
+
+### Added
+- Implemented **Typed Error Architecture**: Replaced generic `Result<_, String>` with strongly-typed `thiserror` enums across 6 workspace crates (`WindowsError`, `WslError`, `StorageError`, `MonitorError`, `DiagnosticsError`, `UiError`).
+- Implemented **Per-Monitor V2 High-DPI Awareness**: Added `SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2)` support so floating overlays, context menus, and taskbar UI render at 100% crisp native display resolution without bitmap blurriness.
+- Implemented **ClearType Subpixel Text Rendering**: Upgraded GDI font creation across overlay and tray icon rendering to use `CLEARTYPE_QUALITY` with point-scaled `Segoe UI` fonts.
+- Implemented **Silent Windowless Application Subsystem**: Configured `#![windows_subsystem = "windows"]` so the application launches silently into the background without displaying a command prompt window, while preserving parent console attachment for CLI flags (`-d`, `-j`, `-h`).
+
+### Fixed
+- Fixed an issue where closing the application via the floating overlay context menu resulted in an orphaned window stuck at `0/0` throughput by posting `WM_QUIT` during `WM_DESTROY`.
+- Corrected workspace `Cargo.toml` license metadata from `MIT OR Apache-2.0` to `GPL-3.0-or-later` to match root `LICENSE` file.
+
 ## [0.4.0] - 2026-07-21
 
 ### Added
