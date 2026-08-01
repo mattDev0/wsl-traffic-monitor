@@ -424,7 +424,9 @@ fn show_context_menu<P: NetworkProvider>(
 
     unsafe {
         // Safety: Creating context popup menu. Handle is verified and closed by standard TrackPopupMenu flow.
-        let hmenu = CreatePopupMenu().unwrap();
+        let Ok(hmenu) = CreatePopupMenu() else {
+            return;
+        };
 
         let title_wide: Vec<u16> = "WSL Traffic Monitor"
             .encode_utf16()

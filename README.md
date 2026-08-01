@@ -4,20 +4,23 @@
 
 WSL Traffic Monitor is a lightweight native Windows application for measuring WSL2 network traffic and showing real-time upload/download speeds in a tray/taskbar interface.
 
-This repository contains a full **Phase 1 & 2 Prototype**. It includes the core NAT-mode traffic sampler, a native Windows system tray UI, rolling usage history (`redb` backed), and a diagnostic harness that handles WSL adapter discovery and Docker Desktop detection.
+This repository contains a full **v0.5.0 Pre-Release**. It includes the core NAT-mode traffic sampler, native Windows system tray UI with Per-Monitor V2 DPI awareness, high-DPI floating display overlay, rolling usage history (`redb` backed), strongly-typed error architecture, and automated release pipeline.
 
 ### Known Limitations
 - **Windows Smoke-Testing**: The tray icon, floating overlay, and history persistence are feature-complete. Extended validation for long-running uptime, Explorer restarts, and Windows network-change events is tracked in `docs/windows_smoke_test_checklist.md`.
 - **Docker Desktop**: Docker installations and WSL backend VMs are detected to improve confidence scoring, but their NAT traffic is currently blended with regular WSL traffic and is not explicitly separated.
 - **Networking Modes**: NAT mode is fully supported for host-side tracking. Mirrored, VirtioProxy, and `none` modes are detected in `.wslconfig` and safely reported as unsupported without mutating user config.
+- **Code Signing**: Official release binaries are currently unsigned self-built binaries from GitHub Actions CI.
 
 ## Current Status
 
 - **Phase 0, 1 & 2 (Completed)**: Fully native Windows tray application running in the background. It monitors WSL NAT traffic, records rolling history in a `redb` database, and offers a right-click UI for diagnostics, history, and settings.
 - **Phase 3 (Completed / Read-Only Safety)**: Mirrored networking, VirtioProxy, and disabled networking are explicitly detected and reported as `UnsupportedNetworkingMode` with visual UI warnings, keeping `.wslconfig` strictly read-only.
-- **Floating Display Overlay**: Compact, glanceable, borderless desktop card showing real-time upload/download speeds and confidence status (`[NAT: HIGH]`). Features position persistence and draggable placement.
+- **Phase 5 (v0.5.0 Pre-Release in Progress)**: GitHub Actions release workflow (`.github/workflows/release.yml`) builds Windows release binaries, SHA-256 checksums, and publishes tagged GitHub Releases (`v0.5.0`).
+- **Floating Display Overlay**: Compact, glanceable, borderless desktop card showing real-time upload/download speeds and confidence status (`[NAT: HIGH]`). Features position persistence, ClearType rendering, and draggable placement.
+- **Typed Error Architecture**: Strongly typed error enums across 6 workspace crates (`WindowsError`, `WslError`, `StorageError`, `MonitorError`, `DiagnosticsError`, `UiError`).
 - **Cross-Compilation**: Verified target compilation for both Linux and Windows (using `x86_64-pc-windows-gnu`).
-- **Tests & Lints (Clean)**: All unit tests pass, and codebase is free of clippy/rustc warnings.
+- **Tests & Lints (Clean)**: All 30 unit tests pass, free of clippy/rustc warnings.
 
 ## Demo
 

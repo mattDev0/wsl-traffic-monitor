@@ -163,7 +163,10 @@ fn unpack_totals(buf: [u8; 16]) -> (u64, u64) {
 /// Returns an error string if database flush fails.
 #[allow(clippy::missing_panics_doc)]
 pub fn record_usage(upload_bytes: u64, download_bytes: u64) -> Result<(), StorageError> {
-    let mut lock = HISTORY_STATE.lock().unwrap();
+    let mut lock = match HISTORY_STATE.lock() {
+        Ok(guard) => guard,
+        Err(poisoned) => poisoned.into_inner(),
+    };
     let state = lock.get_or_insert_with(|| HistoryState {
         pending_up: 0,
         pending_down: 0,
@@ -196,7 +199,10 @@ pub fn record_usage(upload_bytes: u64, download_bytes: u64) -> Result<(), Storag
 /// Returns an error string if database write fails.
 #[allow(clippy::missing_panics_doc)]
 pub fn flush_history() -> Result<(), StorageError> {
-    let mut lock = HISTORY_STATE.lock().unwrap();
+    let mut lock = match HISTORY_STATE.lock() {
+        Ok(guard) => guard,
+        Err(poisoned) => poisoned.into_inner(),
+    };
     if let Some(state) = lock.as_mut() {
         let up = state.pending_up;
         let down = state.pending_down;
