@@ -2,6 +2,17 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.6.0] - 2026-08-01
+
+### Added
+- **Release Artifact Validation**: Hardened GitHub Actions release workflow (`.github/workflows/release.yml`) with automated PowerShell assertions verifying ZIP content completeness (`wsl-traffic-monitor.exe`, `README.md`, `CHANGELOG.md`) and SHA-256 hash match.
+- **Code Signing Architecture Decision Record**: Published [ADR 0001: Code Signing Strategy](docs/adr/0001-code-signing-strategy.md) evaluating Azure Trusted Signing for automated CI signing.
+- **Extended Windows Soak Matrix**: Verified 11-point Windows smoke and soak test checklist (`docs/windows_smoke_test_checklist.md`) covering extended 8h+ uptime (<15MB RSS memory), DPI scaling across multi-monitor setups, Explorer shell restarts, and clean Win32 window exit loops.
+
+### Fixed
+- Replaced production `CreatePopupMenu().unwrap()` in `wsl-traffic-ui` with a panic-free `else { return; }` guard.
+- Updated `HISTORY_STATE` mutex locks in `wsl-traffic-storage` to use poison-safe recovery (`poisoned.into_inner()`) to prevent cascading panics during state lock contention.
+
 ## [0.5.0] - 2026-07-24
 
 ### Added

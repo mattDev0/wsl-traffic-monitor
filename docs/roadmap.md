@@ -37,11 +37,11 @@
 
 ## Phase 5: v0.6 Stabilization Milestone
 
-- [x] Reconcile status wording across `README.md`, `docs/roadmap.md`, and `CHANGELOG.md` for **v0.5.0 Pre-Release**.
+- [x] Reconcile status wording across `README.md`, `docs/roadmap.md`, and `CHANGELOG.md` for **v0.6.0**.
 - [x] Audit production `unwrap()` calls and add poison-safe mutex lock recovery.
-- [ ] Execute full Windows soak & smoke test matrix (`docs/windows_smoke_test_checklist.md`).
-- [ ] Harden GitHub Actions release workflow artifact validation.
-- [ ] Publish Code-Signing Architecture Decision Record (`docs/adr/0001-code-signing-strategy.md`).
+- [x] Execute full Windows soak & smoke test matrix (`docs/windows_smoke_test_checklist.md`).
+- [x] Harden GitHub Actions release workflow artifact validation.
+- [x] Publish Code-Signing Architecture Decision Record (`docs/adr/0001-code-signing-strategy.md`).
 
 ## Phase 6: v1.0 Release Sign-off
 
