@@ -163,6 +163,12 @@ fn unpack_totals(buf: [u8; 16]) -> (u64, u64) {
 /// Returns an error string if database flush fails.
 #[allow(clippy::missing_panics_doc)]
 pub fn record_usage(upload_bytes: u64, download_bytes: u64) -> Result<(), StorageError> {
+    // Note on Mutex Poison Recovery:
+    // Using `into_inner()` on lock poison is acceptable here because `HistoryState` only holds
+    // transient, non-critical in-memory upload/download byte counters waiting to be flushed to disk.
+    // If a thread panics during buffer accumulation, recovering the inner state prevents application
+    // crash without corrupting persistent database integrity. Do NOT copy this pattern into core
+    // state-machine locks where invalid memory state could violate system invariants.
     let mut lock = match HISTORY_STATE.lock() {
         Ok(guard) => guard,
         Err(poisoned) => poisoned.into_inner(),

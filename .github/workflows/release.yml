@@ -59,6 +59,21 @@ jobs:
           $hash = (Get-FileHash -Algorithm SHA256 $ZIP_NAME).Hash.ToLower()
           "$hash  $ZIP_NAME" | Out-File -Encoding ascii "SHA256SUMS.txt"
           
+          # Verify ZIP contents and checksum integrity
+          $contents = (Get-ChildItem -Path "dist_staging").Name
+          if (-not ($contents -contains "wsl-traffic-monitor.exe" -and $contents -contains "README.md" -and $contents -contains "CHANGELOG.md")) {
+              Write-Error "Staging folder missing expected artifacts!"
+              exit 1
+          }
+
+          $computed = (Get-FileHash -Algorithm SHA256 $ZIP_NAME).Hash.ToLower()
+          $stored = (Get-Content "SHA256SUMS.txt").Split()[0].Trim()
+          if ($computed -ne $stored) {
+              Write-Error "SHA256 checksum mismatch!"
+              exit 1
+          }
+          Write-Host "Artifact integrity validation passed successfully."
+
           echo "ZIP_NAME=$ZIP_NAME" >> $env:GITHUB_ENV
 
       - name: Create GitHub Release

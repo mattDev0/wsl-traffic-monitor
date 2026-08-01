@@ -35,10 +35,18 @@
 - [ ] Evaluate per-distro and per-process feasibility.
 - [ ] Define the helper protocol and permissions model.
 
-## Phase 5: v1.0
+## Phase 5: v0.6 Stabilization Milestone
+
+- [x] Reconcile status wording across `README.md`, `docs/roadmap.md`, and `CHANGELOG.md` for **v0.5.0 Pre-Release**.
+- [x] Audit production `unwrap()` calls and add poison-safe mutex lock recovery.
+- [ ] Execute full Windows soak & smoke test matrix (`docs/windows_smoke_test_checklist.md`).
+- [ ] Harden GitHub Actions release workflow artifact validation.
+- [ ] Publish Code-Signing Architecture Decision Record (`docs/adr/0001-code-signing-strategy.md`).
+
+## Phase 6: v1.0 Release Sign-off
 
 - [x] Harden autostart behavior (`is_autostart_enabled` query & path double-quoting).
 - [x] Add storage recovery policy (`redb` timestamped corruption fallback).
 - [x] Define plugin architecture design (`docs/plugin_architecture.md`).
 - [x] Implement GitHub Actions release build & SHA-256 checksum pipeline (`.github/workflows/release.yml`).
-- [ ] Implement code signing pipeline.
+- [ ] Implement Authenticode / Azure Trusted Signing code-signing pipeline.
