@@ -19,11 +19,11 @@ use windows::Win32::UI::Shell::{
 };
 use windows::Win32::UI::WindowsAndMessaging::{
     AppendMenuW, CS_HREDRAW, CS_VREDRAW, CW_USEDEFAULT, CreatePopupMenu, CreateWindowExW,
-    DefWindowProcW, DestroyIcon, DestroyWindow, DispatchMessageW, GetCursorPos, GetMessageW, HICON,
-    IDI_APPLICATION, KillTimer, LoadIconW, MF_GRAYED, MF_SEPARATOR, MF_STRING, PostMessageW,
-    PostQuitMessage, RegisterClassW, SetForegroundWindow, SetTimer, TPM_BOTTOMALIGN, TPM_LEFTALIGN,
-    TrackPopupMenu, TranslateMessage, WINDOW_EX_STYLE, WM_COMMAND, WM_DESTROY, WM_TIMER, WM_USER,
-    WNDCLASSW, WS_OVERLAPPEDWINDOW,
+    DefWindowProcW, DestroyIcon, DestroyMenu, DestroyWindow, DispatchMessageW, GetCursorPos,
+    GetMessageW, HICON, IDI_APPLICATION, KillTimer, LoadIconW, MF_GRAYED, MF_SEPARATOR, MF_STRING,
+    PostMessageW, PostQuitMessage, RegisterClassW, SetForegroundWindow, SetTimer, TPM_BOTTOMALIGN,
+    TPM_LEFTALIGN, TrackPopupMenu, TranslateMessage, WINDOW_EX_STYLE, WM_COMMAND, WM_DESTROY,
+    WM_TIMER, WM_USER, WNDCLASSW, WS_OVERLAPPEDWINDOW,
 };
 use windows::core::{PCWSTR, w};
 use wsl_traffic_core::{format_speed, format_speed_compact};
@@ -65,7 +65,7 @@ trait TrayHandler {
 
 pub struct TrayStateImpl<P: NetworkProvider> {
     pub(crate) service: WslTrafficMonitorService<P>,
-    pub(crate) settings: wsl_traffic_storage::UserSettings,
+    pub(crate) settings: std::sync::Arc<std::sync::Mutex<wsl_traffic_storage::UserSettings>>,
     pub(crate) current_icon: Option<HICON>,
     pub(crate) hwnd_overlay: Option<HWND>,
 }
@@ -73,14 +73,16 @@ pub struct TrayStateImpl<P: NetworkProvider> {
 impl<P: NetworkProvider> TrayHandler for TrayStateImpl<P> {
     fn on_timer(&mut self, hwnd: HWND) {
         let snapshot = self.service.get_snapshot();
+        let settings = self.settings.lock().map(|s| s.clone()).unwrap_or_default();
+
         let tip_text =
             if snapshot.status == wsl_traffic_monitor::MonitorState::UnsupportedNetworkingMode {
                 "WSL Network Traffic\nUnsupported Mode (Mirrored/VirtioProxy)".to_string()
             } else {
                 format!(
                     "WSL Network Traffic\nDown: {}\nUp: {}",
-                    format_speed(snapshot.download_speed, self.settings.speed_unit),
-                    format_speed(snapshot.upload_speed, self.settings.speed_unit)
+                    format_speed(snapshot.download_speed, settings.speed_unit),
+                    format_speed(snapshot.upload_speed, settings.speed_unit)
                 )
             };
         let down_compact = format_speed_compact(snapshot.download_speed);
@@ -89,14 +91,15 @@ impl<P: NetworkProvider> TrayHandler for TrayStateImpl<P> {
         self.update_tray_icon(hwnd, &tip_text, &down_compact, &up_compact);
 
         if let Some(overlay_hwnd) = self.hwnd_overlay {
-            win_overlay::update_overlay_snapshot(overlay_hwnd, snapshot, &self.settings);
+            win_overlay::update_overlay_snapshot(overlay_hwnd, snapshot);
         }
     }
 
     fn on_tray_icon(&mut self, hwnd: HWND, lparam: LPARAM) {
         let event = lparam.0 as u32;
         if event == windows::Win32::UI::WindowsAndMessaging::WM_RBUTTONUP {
-            show_context_menu(hwnd, &self.service, &self.settings);
+            let settings = self.settings.lock().map(|s| s.clone()).unwrap_or_default();
+            show_context_menu(hwnd, &self.service, &settings);
         }
     }
 
@@ -111,28 +114,35 @@ impl<P: NetworkProvider> TrayHandler for TrayStateImpl<P> {
         } else if control_id == ID_TRAY_HISTORY {
             show_history(hwnd);
         } else if control_id == ID_TRAY_SETTINGS {
-            open_settings(hwnd, &self.settings);
+            let settings = self.settings.lock().map(|s| s.clone()).unwrap_or_default();
+            open_settings(hwnd, &settings);
         } else if control_id == ID_TRAY_DIAGNOSTICS {
             export_diagnostics(hwnd);
         } else if control_id == ID_TRAY_AUTOSTART {
-            self.settings.run_at_startup = !self.settings.run_at_startup;
-            let _ = wsl_traffic_storage::save_settings(&self.settings);
-            let _ = wsl_traffic_windows::set_autostart(self.settings.run_at_startup);
+            if let Ok(mut s) = self.settings.lock() {
+                s.run_at_startup = !s.run_at_startup;
+                let _ = wsl_traffic_storage::save_settings(&s);
+                let _ = wsl_traffic_windows::set_autostart(s.run_at_startup);
+            }
         } else if control_id == ID_TRAY_TOGGLE_OVERLAY {
-            self.settings.show_overlay = !self.settings.show_overlay;
-            let _ = wsl_traffic_storage::save_settings(&self.settings);
+            let show_overlay = if let Ok(mut s) = self.settings.lock() {
+                s.show_overlay = !s.show_overlay;
+                let _ = wsl_traffic_storage::save_settings(&s);
+                s.show_overlay
+            } else {
+                false
+            };
             if let Some(overlay_hwnd) = self.hwnd_overlay {
-                win_overlay::set_overlay_visible(overlay_hwnd, self.settings.show_overlay);
+                win_overlay::set_overlay_visible(overlay_hwnd, show_overlay);
+                win_overlay::update_overlay_snapshot(overlay_hwnd, self.service.get_snapshot());
             }
         } else if control_id == ID_TRAY_LOCK_OVERLAY {
-            self.settings.overlay_locked = !self.settings.overlay_locked;
-            let _ = wsl_traffic_storage::save_settings(&self.settings);
+            if let Ok(mut s) = self.settings.lock() {
+                s.overlay_locked = !s.overlay_locked;
+                let _ = wsl_traffic_storage::save_settings(&s);
+            }
             if let Some(overlay_hwnd) = self.hwnd_overlay {
-                win_overlay::update_overlay_snapshot(
-                    overlay_hwnd,
-                    self.service.get_snapshot(),
-                    &self.settings,
-                );
+                win_overlay::update_overlay_snapshot(overlay_hwnd, self.service.get_snapshot());
             }
         }
     }
@@ -287,10 +297,10 @@ unsafe extern "system" fn WndProc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: 
 fn create_speed_icon(down_text: &str, up_text: &str) -> Option<HICON> {
     use windows::Win32::Foundation::{COLORREF, RECT};
     use windows::Win32::Graphics::Gdi::{
-        CreateCompatibleBitmap, CreateCompatibleDC, CreateFontW, DT_CENTER, DT_SINGLELINE,
-        DT_VCENTER, DeleteDC, DeleteObject, DrawTextW, FONT_CHARSET, FONT_CLIP_PRECISION,
-        FONT_OUTPUT_PRECISION, FW_BOLD, GetDC, ReleaseDC, SelectObject, SetBkMode, SetTextColor,
-        TRANSPARENT,
+        BLACKNESS, CreateBitmap, CreateCompatibleBitmap, CreateCompatibleDC, CreateFontW,
+        DT_CENTER, DT_SINGLELINE, DT_VCENTER, DeleteDC, DeleteObject, DrawTextW, FONT_CHARSET,
+        FONT_CLIP_PRECISION, FONT_OUTPUT_PRECISION, FW_BOLD, GetDC, PatBlt, ReleaseDC,
+        SelectObject, SetBkMode, SetTextColor, TRANSPARENT,
     };
     use windows::Win32::UI::WindowsAndMessaging::{CreateIconIndirect, ICONINFO};
 
@@ -309,7 +319,8 @@ fn create_speed_icon(down_text: &str, up_text: &str) -> Option<HICON> {
         let height = 32;
 
         let hbm_color = CreateCompatibleBitmap(hdc_screen, width, height);
-        let hbm_mask = CreateCompatibleBitmap(hdc_screen, width, height);
+        let mask_bytes = vec![0u8; ((width * height) / 8) as usize];
+        let hbm_mask = CreateBitmap(width, height, 1, 1, Some(mask_bytes.as_ptr().cast()));
 
         let _ = ReleaseDC(None, hdc_screen);
 
@@ -325,6 +336,7 @@ fn create_speed_icon(down_text: &str, up_text: &str) -> Option<HICON> {
         }
 
         let old_bm = SelectObject(hdc_mem, hbm_color.into());
+        let _ = PatBlt(hdc_mem, 0, 0, width, height, BLACKNESS);
         let _ = SetBkMode(hdc_mem, TRANSPARENT);
 
         let font_name: Vec<u16> = "Segoe UI".encode_utf16().chain(Some(0)).collect();
@@ -556,6 +568,7 @@ fn show_context_menu<P: NetworkProvider>(
             None,
         );
         let _ = PostMessageW(Some(hwnd), 0, WPARAM(0), LPARAM(0));
+        let _ = DestroyMenu(hmenu);
     }
 }
 
@@ -567,10 +580,12 @@ pub fn run_tray_ui<P: NetworkProvider>(
     service: WslTrafficMonitorService<P>,
     settings: wsl_traffic_storage::UserSettings,
 ) -> Result<(), UiError> {
+    let shared_settings = std::sync::Arc::new(std::sync::Mutex::new(settings));
+
     TRAY_STATE.with(|state| {
         *state.borrow_mut() = Some(Box::new(TrayStateImpl {
             service,
-            settings: settings.clone(),
+            settings: shared_settings.clone(),
             current_icon: None,
             hwnd_overlay: None,
         }));
@@ -634,7 +649,7 @@ pub fn run_tray_ui<P: NetworkProvider>(
         })?;
 
         // Create the floating display overlay window
-        if let Ok(overlay_hwnd) = win_overlay::create_overlay_window(hwnd, &settings) {
+        if let Ok(overlay_hwnd) = win_overlay::create_overlay_window(hwnd, &shared_settings) {
             TRAY_STATE.with(|state| {
                 if let Ok(mut guard) = state.try_borrow_mut() {
                     if let Some(handler) = guard.as_mut() {

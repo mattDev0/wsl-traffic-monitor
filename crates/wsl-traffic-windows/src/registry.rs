@@ -1,5 +1,4 @@
 //! Registry utility module for Windows.
-#![allow(clippy::all, clippy::pedantic, clippy::restriction)]
 
 #[cfg(windows)]
 /// Direct Win32 registry calls.
@@ -252,27 +251,32 @@ pub fn is_docker_desktop_installed() -> bool {
 pub fn is_elevated() -> bool {
     #[cfg(windows)]
     {
-        use windows::Win32::System::Registry::{
-            HKEY_LOCAL_MACHINE, KEY_WRITE, RegCloseKey, RegOpenKeyExW,
+        use windows::Win32::Foundation::{CloseHandle, HANDLE};
+        use windows::Win32::Security::{
+            GetTokenInformation, TOKEN_ELEVATION, TOKEN_QUERY, TokenElevation,
         };
-        use windows::core::PCWSTR;
+        use windows::Win32::System::Threading::{GetCurrentProcess, OpenProcessToken};
 
         unsafe {
-            let mut key = windows::Win32::System::Registry::HKEY::default();
-            let subkey: Vec<u16> = "Software".encode_utf16().chain(Some(0)).collect();
-            let result = RegOpenKeyExW(
-                HKEY_LOCAL_MACHINE,
-                PCWSTR(subkey.as_ptr()),
-                Some(0),
-                KEY_WRITE,
-                &mut key,
-            );
-            if result.is_ok() {
-                let _ = RegCloseKey(key);
-                true
-            } else {
-                false
+            let mut token = HANDLE::default();
+            if OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, &mut token).is_err() {
+                return false;
             }
+
+            let mut elevation = TOKEN_ELEVATION::default();
+            let mut size = std::mem::size_of::<TOKEN_ELEVATION>() as u32;
+
+            let result = GetTokenInformation(
+                token,
+                TokenElevation,
+                Some(&mut elevation as *mut _ as *mut _),
+                size,
+                &mut size,
+            );
+
+            let _ = CloseHandle(token);
+
+            result.is_ok() && elevation.TokenIsElevated != 0
         }
     }
     #[cfg(not(windows))]

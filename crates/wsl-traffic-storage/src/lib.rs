@@ -224,28 +224,40 @@ pub fn flush_history() -> Result<(), StorageError> {
 }
 
 fn open_or_recover_db(path: &PathBuf) -> Result<Database, StorageError> {
-    if let Ok(db) = Database::create(path) {
-        Ok(db)
-    } else {
-        let now = time::OffsetDateTime::now_utc();
-        let timestamp = format!(
-            "{:04}{:02}{:02}_{:02}{:02}{:02}",
-            now.year(),
-            now.month() as u8,
-            now.day(),
-            now.hour(),
-            now.minute(),
-            now.second()
-        );
-        let bak_filename = format!("history_corrupt_{timestamp}.redb.bak");
-        let bak_path = path.with_file_name(bak_filename);
-        tracing::warn!(
-            "Failed to open history database at {:?}, archiving to {:?}",
-            path,
-            bak_path
-        );
-        let _ = fs::rename(path, bak_path);
-        Ok(Database::create(path)?)
+    match Database::create(path) {
+        Ok(db) => Ok(db),
+        Err(redb::DatabaseError::DatabaseAlreadyOpen) => Err(StorageError::DatabaseOpen(Box::new(
+            redb::DatabaseError::DatabaseAlreadyOpen,
+        ))),
+        Err(err) => {
+            if let redb::DatabaseError::Storage(redb::StorageError::Io(ref io_err)) = err {
+                if io_err.kind() == std::io::ErrorKind::PermissionDenied
+                    || io_err.kind() == std::io::ErrorKind::WouldBlock
+                {
+                    return Err(StorageError::DatabaseOpen(Box::new(err)));
+                }
+            }
+            let now = time::OffsetDateTime::now_utc();
+            let timestamp = format!(
+                "{:04}{:02}{:02}_{:02}{:02}{:02}",
+                now.year(),
+                now.month() as u8,
+                now.day(),
+                now.hour(),
+                now.minute(),
+                now.second()
+            );
+            let bak_filename = format!("history_corrupt_{timestamp}.redb.bak");
+            let bak_path = path.with_file_name(bak_filename);
+            tracing::warn!(
+                "Failed to open history database at {:?} due to {:?}, archiving to {:?}",
+                path,
+                err,
+                bak_path
+            );
+            let _ = fs::rename(path, bak_path);
+            Ok(Database::create(path)?)
+        }
     }
 }
 

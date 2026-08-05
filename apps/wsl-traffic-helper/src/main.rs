@@ -251,7 +251,7 @@ fn get_process_owner(path: &std::path::Path) -> String {
 
 #[cfg(not(target_os = "linux"))]
 fn get_process_owner(_path: &std::path::Path) -> String {
-    "matt".to_string()
+    "unknown".to_string()
 }
 
 #[cfg(target_os = "linux")]
