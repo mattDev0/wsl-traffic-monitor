@@ -15,15 +15,16 @@ use windows::Win32::Foundation::{COLORREF, HWND, LPARAM, LRESULT, RECT, WPARAM};
 use windows::Win32::Graphics::Gdi::{
     BeginPaint, CreateCompatibleBitmap, CreateCompatibleDC, CreateFontW, CreateSolidBrush, DT_LEFT,
     DT_SINGLELINE, DT_VCENTER, DeleteDC, DeleteObject, DrawTextW, EndPaint, FONT_CHARSET,
-    FONT_CLIP_PRECISION, FONT_OUTPUT_PRECISION, FW_BOLD, FillRect, PAINTSTRUCT, SRCCOPY,
-    SelectObject, SetBkMode, SetTextColor, TRANSPARENT,
+    FONT_CLIP_PRECISION, FONT_OUTPUT_PRECISION, FW_BOLD, FillRect, MONITOR_DEFAULTTONULL,
+    MonitorFromRect, PAINTSTRUCT, SRCCOPY, SelectObject, SetBkMode, SetTextColor, TRANSPARENT,
 };
 use windows::Win32::UI::Input::KeyboardAndMouse::ReleaseCapture;
 use windows::Win32::UI::WindowsAndMessaging::{
-    CS_HREDRAW, CS_VREDRAW, DefWindowProcW, GetSystemMetrics, GetWindowRect, HTCAPTION, LWA_ALPHA,
-    PostMessageW, RegisterClassW, SM_CXSCREEN, SM_CYSCREEN, SW_HIDE, SW_SHOW, SendMessageW,
-    SetLayeredWindowAttributes, ShowWindow, WM_DESTROY, WM_ERASEBKGND, WM_EXITSIZEMOVE,
-    WM_LBUTTONDOWN, WM_MOVE, WM_NCLBUTTONDOWN, WM_PAINT, WM_RBUTTONUP, WM_USER, WNDCLASSW,
+    CS_HREDRAW, CS_VREDRAW, DefWindowProcW, GetSystemMetrics, GetWindowRect, HTCAPTION,
+    HWND_TOPMOST, LWA_ALPHA, PostMessageW, RegisterClassW, SM_CXSCREEN, SM_CYSCREEN,
+    SPI_GETWORKAREA, SW_HIDE, SW_SHOW, SWP_NOACTIVATE, SendMessageW, SetLayeredWindowAttributes,
+    SetWindowPos, ShowWindow, SystemParametersInfoW, WM_DESTROY, WM_DPICHANGED, WM_ERASEBKGND,
+    WM_EXITSIZEMOVE, WM_LBUTTONDOWN, WM_NCLBUTTONDOWN, WM_PAINT, WM_RBUTTONUP, WM_USER, WNDCLASSW,
     WS_EX_LAYERED, WS_EX_TOOLWINDOW, WS_EX_TOPMOST, WS_POPUP,
 };
 use windows::core::{PCWSTR, w};
@@ -39,10 +40,12 @@ thread_local! {
     static OVERLAY_DATA: RefCell<Option<OverlayData>> = const { RefCell::new(None) };
 }
 
+use std::sync::{Arc, Mutex};
+
 pub struct OverlayData {
     pub hwnd_tray: HWND,
     pub snapshot: MonitorStateSnapshot,
-    pub settings: wsl_traffic_storage::UserSettings,
+    pub settings: Arc<Mutex<wsl_traffic_storage::UserSettings>>,
 }
 
 use crate::UiError;
@@ -59,8 +62,14 @@ fn get_dpi_for_window(hwnd: HWND) -> u32 {
 #[allow(unsafe_code)]
 pub fn create_overlay_window(
     hwnd_tray: HWND,
-    settings: &wsl_traffic_storage::UserSettings,
+    shared_settings: &Arc<Mutex<wsl_traffic_storage::UserSettings>>,
 ) -> Result<HWND, UiError> {
+    let settings = shared_settings
+        .lock()
+        .map_err(|_| UiError::WindowCreationFailed {
+            details: "Failed to lock settings".to_string(),
+        })?
+        .clone();
     let instance = unsafe { windows::Win32::System::LibraryLoader::GetModuleHandleW(None) }
         .map_err(|e| UiError::WindowCreationFailed {
             details: format!("GetModuleHandleW failed: {e}"),
@@ -88,15 +97,46 @@ pub fn create_overlay_window(
     let overlay_w = ((BASE_OVERLAY_WIDTH * dpi as i32) + 48) / 96;
     let overlay_h = ((BASE_OVERLAY_HEIGHT * dpi as i32) + 48) / 96;
 
-    // Calculate default position (bottom-right above taskbar) if not saved
-    let (x, y) = if settings.overlay_x >= 0 && settings.overlay_y >= 0 {
-        (settings.overlay_x, settings.overlay_y)
-    } else {
-        unsafe {
-            let screen_w = GetSystemMetrics(SM_CXSCREEN);
-            let screen_h = GetSystemMetrics(SM_CYSCREEN);
-            (screen_w - overlay_w - 20, screen_h - overlay_h - 60)
+    // Calculate default position (bottom-right above taskbar) using work area
+    let work_area = unsafe {
+        let mut work_rect = RECT::default();
+        if SystemParametersInfoW(
+            SPI_GETWORKAREA,
+            0,
+            Some(std::ptr::from_mut(&mut work_rect).cast()),
+            windows::Win32::UI::WindowsAndMessaging::SYSTEM_PARAMETERS_INFO_UPDATE_FLAGS(0),
+        )
+        .is_ok()
+        {
+            work_rect
+        } else {
+            RECT {
+                left: 0,
+                top: 0,
+                right: GetSystemMetrics(SM_CXSCREEN),
+                bottom: GetSystemMetrics(SM_CYSCREEN),
+            }
         }
+    };
+
+    let default_x = work_area.right - overlay_w - 20;
+    let default_y = work_area.bottom - overlay_h - 20;
+
+    let (x, y) = if settings.overlay_x >= 0 && settings.overlay_y >= 0 {
+        let check_rect = RECT {
+            left: settings.overlay_x,
+            top: settings.overlay_y,
+            right: settings.overlay_x + overlay_w,
+            bottom: settings.overlay_y + overlay_h,
+        };
+        let hmon = unsafe { MonitorFromRect(&check_rect, MONITOR_DEFAULTTONULL) };
+        if hmon.0.is_null() {
+            (default_x, default_y)
+        } else {
+            (settings.overlay_x, settings.overlay_y)
+        }
+    } else {
+        (default_x, default_y)
     };
 
     let hwnd = unsafe {
@@ -130,7 +170,7 @@ pub fn create_overlay_window(
                 confidence: MeasurementConfidence::Unsupported,
                 error_state: None,
             },
-            settings: settings.clone(),
+            settings: shared_settings.clone(),
         });
     });
 
@@ -151,15 +191,10 @@ pub fn create_overlay_window(
 
 /// Update telemetry and trigger repaint for the overlay window.
 #[allow(unsafe_code)]
-pub fn update_overlay_snapshot(
-    hwnd: HWND,
-    snapshot: MonitorStateSnapshot,
-    settings: &wsl_traffic_storage::UserSettings,
-) {
+pub fn update_overlay_snapshot(hwnd: HWND, snapshot: MonitorStateSnapshot) {
     OVERLAY_DATA.with(|data| {
         if let Some(d) = data.borrow_mut().as_mut() {
             d.snapshot = snapshot;
-            d.settings = settings.clone();
         }
     });
 
@@ -197,7 +232,8 @@ unsafe extern "system" fn WndProcOverlay(
             let locked = OVERLAY_DATA.with(|data| {
                 data.borrow()
                     .as_ref()
-                    .is_some_and(|d| d.settings.overlay_locked)
+                    .and_then(|d| d.settings.lock().ok().map(|s| s.overlay_locked))
+                    .unwrap_or(false)
             });
 
             if !locked {
@@ -215,19 +251,37 @@ unsafe extern "system" fn WndProcOverlay(
             unsafe { DefWindowProcW(hwnd, msg, wparam, lparam) }
         }
 
-        WM_EXITSIZEMOVE | WM_MOVE => {
-            // Save updated window position
+        WM_EXITSIZEMOVE => {
+            // Save updated window position when user finishes dragging
             let mut rect = RECT::default();
             if unsafe { GetWindowRect(hwnd, &mut rect) }.is_ok() {
                 OVERLAY_DATA.with(|data| {
                     if let Some(d) = data.borrow_mut().as_mut() {
-                        d.settings.overlay_x = rect.left;
-                        d.settings.overlay_y = rect.top;
-                        let _ = wsl_traffic_storage::save_settings(&d.settings);
+                        if let Ok(mut s) = d.settings.lock() {
+                            s.overlay_x = rect.left;
+                            s.overlay_y = rect.top;
+                            let _ = wsl_traffic_storage::save_settings(&s);
+                        }
                     }
                 });
             }
             unsafe { DefWindowProcW(hwnd, msg, wparam, lparam) }
+        }
+
+        WM_DPICHANGED => {
+            let suggested_rect = unsafe { *(lparam.0 as *const RECT) };
+            unsafe {
+                let _ = SetWindowPos(
+                    hwnd,
+                    Some(HWND_TOPMOST),
+                    suggested_rect.left,
+                    suggested_rect.top,
+                    suggested_rect.right - suggested_rect.left,
+                    suggested_rect.bottom - suggested_rect.top,
+                    SWP_NOACTIVATE,
+                );
+            }
+            LRESULT(0)
         }
 
         WM_RBUTTONUP => {

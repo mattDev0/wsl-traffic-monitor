@@ -1,5 +1,21 @@
 //! Windows platform boundary.
-#![allow(clippy::all, clippy::pedantic, clippy::restriction)]
+#![allow(
+    clippy::borrow_as_ptr,
+    clippy::cast_lossless,
+    clippy::cast_possible_truncation,
+    clippy::cast_possible_wrap,
+    clippy::cast_ptr_alignment,
+    clippy::cast_sign_loss,
+    clippy::doc_markdown,
+    clippy::field_reassign_with_default,
+    clippy::items_after_statements,
+    clippy::manual_string_new,
+    clippy::ptr_as_ptr,
+    clippy::ref_as_ptr,
+    clippy::too_many_lines,
+    clippy::uninlined_format_args,
+    clippy::unwrap_or_default
+)]
 //!
 //! Exposes Win32 IP Helper wrappers, process queries, and registry checks.
 

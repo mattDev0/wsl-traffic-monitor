@@ -7,6 +7,7 @@ use std::process;
 use wsl_traffic_core::format_speed;
 use wsl_traffic_diagnostics::{format_report_as_json, format_report_as_text, generate_report};
 
+#[allow(clippy::too_many_lines)]
 fn main() {
     let args: Vec<String> = env::args().collect();
 
@@ -30,6 +31,10 @@ fn main() {
             }
             "-d" | "--diagnostics" => {
                 run_diagnostics = true;
+            }
+            "-v" | "--version" => {
+                println!("WSL Traffic Monitor v{}", env!("CARGO_PKG_VERSION"));
+                return;
             }
             "-h" | "--help" => {
                 print_help();
@@ -68,6 +73,25 @@ fn main() {
     }
 
     // Default behavior: Run the active monitoring service and the UI
+    #[cfg(windows)]
+    #[allow(unsafe_code)]
+    let _single_instance_guard = unsafe {
+        use windows::Win32::Foundation::ERROR_ALREADY_EXISTS;
+        use windows::Win32::System::Threading::CreateMutexW;
+        use windows::core::w;
+
+        let handle = CreateMutexW(
+            None,
+            true,
+            w!("Local\\WslTrafficMonitorSingleInstanceMutex"),
+        );
+        if windows::Win32::Foundation::GetLastError() == ERROR_ALREADY_EXISTS {
+            eprintln!("WSL Traffic Monitor is already running.");
+            return;
+        }
+        handle
+    };
+
     let settings = wsl_traffic_storage::load_settings();
     let _ = wsl_traffic_windows::set_autostart(settings.run_at_startup);
     let mut service = wsl_traffic_monitor::WslTrafficMonitorService::new();
@@ -113,12 +137,13 @@ fn main() {
 }
 
 fn print_help() {
-    println!("WSL Traffic Monitor");
+    println!("WSL Traffic Monitor v{}", env!("CARGO_PKG_VERSION"));
     println!();
     println!("Usage: wsl-traffic-monitor [options]");
     println!();
     println!("Options:");
     println!("  -d, --diagnostics  Output the diagnostics report");
     println!("  -j, --json         Output the diagnostics report in structured JSON format");
+    println!("  -v, --version      Show version information");
     println!("  -h, --help         Show this help message");
 }

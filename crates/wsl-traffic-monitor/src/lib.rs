@@ -689,7 +689,10 @@ impl<P: NetworkProvider> WslTrafficMonitorService<P> {
                 if stop_rx.recv_timeout(interval).is_ok() {
                     break;
                 }
-                let mut m = monitor.lock().unwrap();
+                let mut m = match monitor.lock() {
+                    Ok(guard) => guard,
+                    Err(poisoned) => poisoned.into_inner(),
+                };
                 let sample = m.tick();
                 let status = m.state();
                 let confidence = m.confidence();
@@ -736,7 +739,10 @@ impl<P: NetworkProvider> WslTrafficMonitorService<P> {
     /// Retrieve the current snapshot of the monitoring metrics and status.
     #[must_use]
     pub fn get_snapshot(&self) -> MonitorStateSnapshot {
-        self.state.read().unwrap().clone()
+        match self.state.read() {
+            Ok(guard) => guard.clone(),
+            Err(poisoned) => poisoned.into_inner().clone(),
+        }
     }
 
     /// Retrieve the current status of the service (whether background polling is active).

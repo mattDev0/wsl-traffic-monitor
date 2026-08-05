@@ -54,7 +54,7 @@ mod tests {
         let settings = wsl_traffic_storage::UserSettings::default();
         let handler = win_tray::TrayStateImpl {
             service,
-            settings,
+            settings: std::sync::Arc::new(std::sync::Mutex::new(settings)),
             current_icon: None,
             hwnd_overlay: None,
         };
