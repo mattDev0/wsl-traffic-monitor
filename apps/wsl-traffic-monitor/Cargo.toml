@@ -13,6 +13,7 @@ path = "src/main.rs"
 doc = false
 
 [dependencies]
+time.workspace = true
 tracing.workspace = true
 tracing-subscriber.workspace = true
 wsl-traffic-core.workspace = true

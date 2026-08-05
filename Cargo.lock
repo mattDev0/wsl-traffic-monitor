@@ -668,6 +668,7 @@ dependencies = [
 name = "wsl-traffic-monitor-app"
 version = "0.6.0"
 dependencies = [
+ "time",
  "tracing",
  "tracing-subscriber",
  "windows",
