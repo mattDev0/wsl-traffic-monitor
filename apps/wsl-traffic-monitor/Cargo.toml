@@ -1,6 +1,6 @@
 [package]
 name = "wsl-traffic-monitor-app"
-version = "0.1.0"
+version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
@@ -25,7 +25,9 @@ wsl-traffic-wsl.workspace = true
 
 [target.'cfg(windows)'.dependencies]
 windows = { workspace = true, features = [
-    "Win32_System_Console"
+    "Win32_Foundation",
+    "Win32_System_Console",
+    "Win32_System_Threading"
 ] }
 
 [lints]
