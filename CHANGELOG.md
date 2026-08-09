@@ -2,6 +2,46 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.6.1] - 2026-08-09
+
+### Added
+- **Per-user installer** (Inno Setup). Installs without administrator rights, offers a
+  run-at-sign-in option, and closes a running instance cleanly before install or
+  uninstall so pending usage history is flushed rather than lost.
+- **Windows version resource and application icon**. `Properties -> Details` now reports
+  the real version, product name and licence; the generic system icon is gone.
+- **Azure Trusted Signing pipeline**, authenticating by OIDC federation. Inactive until
+  Microsoft identity validation completes; releases are labelled UNSIGNED until then.
+- `-v` / `--version` flag.
+- Unattended `--auto` protocol in the Phase 0 logger, with phase markers and a computed
+  verdict on directionality and isolation.
+
+### Fixed
+- **History database could be destroyed by launching a second instance.** Any database
+  open failure was treated as corruption and the file archived aside; a lock held by
+  another process is now distinguished from real corruption, and a single-instance guard
+  prevents the situation arising.
+- **Tray icon rendered as an opaque black tile** on light taskbars. Now composited with a
+  real per-pixel alpha channel.
+- Context menu leaked an `HMENU` on every right-click.
+- Overlay position was written to disk on every `WM_MOVE` during a drag rather than once
+  on release.
+- Tray and overlay held separate copies of user settings that overwrote each other.
+- Overlay could be restored onto a disconnected display with no way to recover it.
+- Unhandled `WM_DPICHANGED` left the overlay clipped when moved between monitors with
+  different scaling.
+- Two production `unwrap()` calls on lock acquisition could take down the UI thread.
+- `is_elevated()` inferred elevation from a registry write probe instead of querying the
+  process token.
+- Phase 0 harness measured a Hyper-V switch endpoint as the "physical" adapter, which
+  carried no host traffic, invalidating every isolation measurement taken against it.
+
+### Changed
+- Crate versions now inherit the workspace version. They had been pinned at 0.1.0 while
+  release tags said 0.6.0.
+- Documentation states only what has been measured. The smoke matrix and validation
+  report previously recorded passes for tests that had not been run.
+
 ## [0.6.0] - 2026-08-01
 
 ### Added

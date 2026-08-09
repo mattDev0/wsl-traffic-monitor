@@ -652,7 +652,7 @@ dependencies = [
 
 [[package]]
 name = "wsl-traffic-agent-protocol"
-version = "0.6.0"
+version = "0.6.1"
 dependencies = [
  "serde",
  "serde_json",
@@ -661,7 +661,7 @@ dependencies = [
 
 [[package]]
 name = "wsl-traffic-core"
-version = "0.6.0"
+version = "0.6.1"
 dependencies = [
  "serde",
  "thiserror",
@@ -670,7 +670,7 @@ dependencies = [
 
 [[package]]
 name = "wsl-traffic-diagnostics"
-version = "0.6.0"
+version = "0.6.1"
 dependencies = [
  "serde",
  "serde_json",
@@ -684,7 +684,7 @@ dependencies = [
 
 [[package]]
 name = "wsl-traffic-helper"
-version = "0.6.0"
+version = "0.6.1"
 dependencies = [
  "serde",
  "serde_json",
@@ -693,7 +693,7 @@ dependencies = [
 
 [[package]]
 name = "wsl-traffic-monitor"
-version = "0.6.0"
+version = "0.6.1"
 dependencies = [
  "thiserror",
  "time",
@@ -706,7 +706,7 @@ dependencies = [
 
 [[package]]
 name = "wsl-traffic-monitor-app"
-version = "0.6.0"
+version = "0.6.1"
 dependencies = [
  "time",
  "tracing",
@@ -724,7 +724,7 @@ dependencies = [
 
 [[package]]
 name = "wsl-traffic-storage"
-version = "0.6.0"
+version = "0.6.1"
 dependencies = [
  "directories",
  "redb",
@@ -738,7 +738,7 @@ dependencies = [
 
 [[package]]
 name = "wsl-traffic-ui"
-version = "0.6.0"
+version = "0.6.1"
 dependencies = [
  "directories",
  "thiserror",
@@ -753,7 +753,7 @@ dependencies = [
 
 [[package]]
 name = "wsl-traffic-windows"
-version = "0.6.0"
+version = "0.6.1"
 dependencies = [
  "thiserror",
  "tracing",
@@ -763,7 +763,7 @@ dependencies = [
 
 [[package]]
 name = "wsl-traffic-wsl"
-version = "0.6.0"
+version = "0.6.1"
 dependencies = [
  "directories",
  "serde",
