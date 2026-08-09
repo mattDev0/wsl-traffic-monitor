@@ -12,6 +12,12 @@ name = "wsl-traffic-monitor"
 path = "src/main.rs"
 doc = false
 
+# Not gated on cfg(windows): build-dependency targets resolve against the host,
+# and this crate is cross-compiled to Windows from Linux. build.rs checks the
+# actual target and no-ops elsewhere.
+[build-dependencies]
+winresource = "0.1.24"
+
 [dependencies]
 time.workspace = true
 tracing.workspace = true
