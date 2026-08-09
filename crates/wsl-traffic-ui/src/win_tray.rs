@@ -293,6 +293,23 @@ unsafe extern "system" fn WndProc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: 
     }
 }
 
+/// Resource id of the application icon embedded by the app crate's build script.
+const IDI_APP_ICON: u16 = 1;
+
+/// Load the embedded application icon, falling back to the system default.
+///
+/// This is the icon shown in Alt-Tab, the taskbar and the window's own frame. The
+/// tray icon itself is rendered per tick by `create_speed_icon`. The fallback keeps
+/// the UI usable if the executable was built without embedded resources.
+#[allow(unsafe_code)]
+fn load_app_icon(instance: windows::Win32::Foundation::HINSTANCE) -> HICON {
+    unsafe {
+        LoadIconW(Some(instance), PCWSTR(IDI_APP_ICON as *const u16))
+            .or_else(|_| LoadIconW(None, IDI_APPLICATION))
+            .unwrap_or(HICON(std::ptr::null_mut()))
+    }
+}
+
 /// Download glyph colour as (R, G, B).
 const ICON_DOWN_RGB: (u32, u32, u32) = (0x00, 0xDC, 0xFF);
 /// Upload glyph colour as (R, G, B).
@@ -680,7 +697,7 @@ pub fn run_tray_ui<P: NetworkProvider>(
             lpfnWndProc: Some(WndProc),
             hInstance: instance.into(),
             lpszClassName: PCWSTR(class_name.as_ptr()),
-            hIcon: LoadIconW(None, IDI_APPLICATION).unwrap_or(HICON(std::ptr::null_mut())),
+            hIcon: load_app_icon(instance.into()),
             ..Default::default()
         };
 
@@ -728,7 +745,7 @@ pub fn run_tray_ui<P: NetworkProvider>(
             uID: 1,
             uFlags: NIF_ICON | NIF_MESSAGE | NIF_TIP,
             uCallbackMessage: WM_TRAY_ICON,
-            hIcon: LoadIconW(None, IDI_APPLICATION).unwrap_or(HICON(std::ptr::null_mut())),
+            hIcon: load_app_icon(instance.into()),
             ..Default::default()
         };
         let tip_wide: Vec<u16> = "WSL Traffic Monitor starting...".encode_utf16().collect();
