@@ -293,38 +293,69 @@ unsafe extern "system" fn WndProc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: 
     }
 }
 
+/// Download glyph colour as (R, G, B).
+const ICON_DOWN_RGB: (u32, u32, u32) = (0x00, 0xDC, 0xFF);
+/// Upload glyph colour as (R, G, B).
+const ICON_UP_RGB: (u32, u32, u32) = (0xFF, 0xD0, 0x00);
+
+/// Render the speed readout into a 32bpp icon with a real per-pixel alpha channel.
+///
+/// A colour bitmap plus a 1bpp mask cannot express partial coverage, so the icon was
+/// previously an opaque tile: on a light taskbar it read as a black box next to every
+/// other tray glyph. GDI text routines do not write alpha, so the glyphs are drawn in
+/// white onto a zeroed buffer and the coverage of each pixel is recovered from its
+/// brightness, then recoloured and premultiplied.
 #[allow(unsafe_code)]
 fn create_speed_icon(down_text: &str, up_text: &str) -> Option<HICON> {
-    use windows::Win32::Foundation::{COLORREF, RECT};
+    use windows::Win32::Foundation::RECT;
     use windows::Win32::Graphics::Gdi::{
-        BLACKNESS, CreateBitmap, CreateCompatibleBitmap, CreateCompatibleDC, CreateFontW,
-        DT_CENTER, DT_SINGLELINE, DT_VCENTER, DeleteDC, DeleteObject, DrawTextW, FONT_CHARSET,
-        FONT_CLIP_PRECISION, FONT_OUTPUT_PRECISION, FW_BOLD, GetDC, PatBlt, ReleaseDC,
-        SelectObject, SetBkMode, SetTextColor, TRANSPARENT,
+        ANTIALIASED_QUALITY, BI_RGB, BITMAPINFO, BITMAPINFOHEADER, CreateBitmap,
+        CreateCompatibleDC, CreateDIBSection, CreateFontW, DIB_RGB_COLORS, DT_CENTER,
+        DT_SINGLELINE, DT_VCENTER, DeleteDC, DeleteObject, DrawTextW, FONT_CHARSET,
+        FONT_CLIP_PRECISION, FONT_OUTPUT_PRECISION, FW_BOLD, HGDIOBJ, SelectObject, SetBkMode,
+        SetTextColor, TRANSPARENT,
     };
     use windows::Win32::UI::WindowsAndMessaging::{CreateIconIndirect, ICONINFO};
 
+    const WIDTH: i32 = 32;
+    const HEIGHT: i32 = 32;
+
     unsafe {
-        let hdc_screen = GetDC(None);
-        if hdc_screen.is_invalid() {
-            return None;
-        }
-        let hdc_mem = CreateCompatibleDC(Some(hdc_screen));
+        let hdc_mem = CreateCompatibleDC(None);
         if hdc_mem.is_invalid() {
-            let _ = ReleaseDC(None, hdc_screen);
             return None;
         }
 
-        let width = 32;
-        let height = 32;
+        // Negative height requests a top-down DIB so row 0 is the top scanline.
+        let bmi = BITMAPINFO {
+            bmiHeader: BITMAPINFOHEADER {
+                biSize: u32::try_from(std::mem::size_of::<BITMAPINFOHEADER>()).unwrap_or(40),
+                biWidth: WIDTH,
+                biHeight: -HEIGHT,
+                biPlanes: 1,
+                biBitCount: 32,
+                biCompression: BI_RGB.0,
+                ..Default::default()
+            },
+            ..Default::default()
+        };
 
-        let hbm_color = CreateCompatibleBitmap(hdc_screen, width, height);
-        let mask_bytes = vec![0u8; ((width * height) / 8) as usize];
-        let hbm_mask = CreateBitmap(width, height, 1, 1, Some(mask_bytes.as_ptr().cast()));
+        let mut bits: *mut std::ffi::c_void = std::ptr::null_mut();
+        let hbm_color = CreateDIBSection(
+            Some(hdc_mem),
+            &raw const bmi,
+            DIB_RGB_COLORS,
+            &raw mut bits,
+            None,
+            0,
+        )
+        .ok()?;
 
-        let _ = ReleaseDC(None, hdc_screen);
+        // The mask is ignored for 32bpp alpha icons but ICONINFO still requires one.
+        let mask_bytes = vec![0u8; ((WIDTH * HEIGHT) / 8) as usize];
+        let hbm_mask = CreateBitmap(WIDTH, HEIGHT, 1, 1, Some(mask_bytes.as_ptr().cast()));
 
-        if hbm_color.is_invalid() || hbm_mask.is_invalid() {
+        if hbm_color.is_invalid() || hbm_mask.is_invalid() || bits.is_null() {
             if !hbm_color.is_invalid() {
                 let _ = DeleteObject(hbm_color.into());
             }
@@ -335,10 +366,15 @@ fn create_speed_icon(down_text: &str, up_text: &str) -> Option<HICON> {
             return None;
         }
 
+        let pixel_count = (WIDTH * HEIGHT) as usize;
+        let pixels = std::slice::from_raw_parts_mut(bits.cast::<u32>(), pixel_count);
+        pixels.fill(0);
+
         let old_bm = SelectObject(hdc_mem, hbm_color.into());
-        let _ = PatBlt(hdc_mem, 0, 0, width, height, BLACKNESS);
         let _ = SetBkMode(hdc_mem, TRANSPARENT);
 
+        // ClearType writes subpixel colour fringes that cannot be reduced to a single
+        // coverage value; greyscale antialiasing keeps brightness proportional to coverage.
         let font_name: Vec<u16> = "Segoe UI".encode_utf16().chain(Some(0)).collect();
         let hfont = CreateFontW(
             -13,
@@ -352,29 +388,21 @@ fn create_speed_icon(down_text: &str, up_text: &str) -> Option<HICON> {
             FONT_CHARSET(0),
             FONT_OUTPUT_PRECISION(0),
             FONT_CLIP_PRECISION(0),
-            windows::Win32::Graphics::Gdi::CLEARTYPE_QUALITY,
+            ANTIALIASED_QUALITY,
             0,
             PCWSTR(font_name.as_ptr()),
         );
-
         let old_font = SelectObject(hdc_mem, hfont.into());
+
+        // Draw both rows in white; colour is applied per pixel afterwards.
+        let _ = SetTextColor(hdc_mem, windows::Win32::Foundation::COLORREF(0x00FF_FFFF));
 
         let mut rect_down = RECT {
             left: 0,
             top: 0,
-            right: width,
-            bottom: height / 2,
+            right: WIDTH,
+            bottom: HEIGHT / 2,
         };
-
-        let mut rect_up = RECT {
-            left: 0,
-            top: height / 2,
-            right: width,
-            bottom: height,
-        };
-
-        // Cyan for download (0x00FFDC00 in 0x00BBGGRR format)
-        let _ = SetTextColor(hdc_mem, COLORREF(0x00FFDC00));
         let mut down_wide: Vec<u16> = down_text.encode_utf16().chain(Some(0)).collect();
         let down_len = down_wide.len() - 1;
         let _ = DrawTextW(
@@ -384,8 +412,12 @@ fn create_speed_icon(down_text: &str, up_text: &str) -> Option<HICON> {
             DT_CENTER | DT_SINGLELINE | DT_VCENTER,
         );
 
-        // Bright Yellow/Orange for upload (0x0000D0FF in 0x00BBGGRR format)
-        let _ = SetTextColor(hdc_mem, COLORREF(0x0000D0FF));
+        let mut rect_up = RECT {
+            left: 0,
+            top: HEIGHT / 2,
+            right: WIDTH,
+            bottom: HEIGHT,
+        };
         let mut up_wide: Vec<u16> = up_text.encode_utf16().chain(Some(0)).collect();
         let up_len = up_wide.len() - 1;
         let _ = DrawTextW(
@@ -395,10 +427,13 @@ fn create_speed_icon(down_text: &str, up_text: &str) -> Option<HICON> {
             DT_CENTER | DT_SINGLELINE | DT_VCENTER,
         );
 
+        // Detach the DIB before touching its pixels so GDI has flushed its writes.
         let _ = SelectObject(hdc_mem, old_font);
         let _ = DeleteObject(hfont.into());
-        let _ = SelectObject(hdc_mem, old_bm);
+        let _ = SelectObject(hdc_mem, old_bm as HGDIOBJ);
         let _ = DeleteDC(hdc_mem);
+
+        colourise_coverage(pixels, WIDTH as usize, HEIGHT as usize);
 
         let icon_info = ICONINFO {
             fIcon: true.into(),
@@ -407,13 +442,41 @@ fn create_speed_icon(down_text: &str, up_text: &str) -> Option<HICON> {
             hbmMask: hbm_mask,
             hbmColor: hbm_color,
         };
-
         let hicon = CreateIconIndirect(&icon_info).ok();
 
         let _ = DeleteObject(hbm_color.into());
         let _ = DeleteObject(hbm_mask.into());
 
         hicon
+    }
+}
+
+/// Turn white-on-transparent glyph coverage into premultiplied coloured pixels.
+///
+/// Brightness of the rendered pixel is the antialiased coverage of the glyph, which
+/// becomes the alpha value. The shell composites tray icons with `AlphaBlend`, so the
+/// colour channels are premultiplied by that alpha.
+fn colourise_coverage(pixels: &mut [u32], width: usize, height: usize) {
+    for y in 0..height {
+        let (r, g, b) = if y < height / 2 {
+            ICON_DOWN_RGB
+        } else {
+            ICON_UP_RGB
+        };
+
+        for x in 0..width {
+            let idx = y * width + x;
+            let px = pixels[idx];
+            // Top-down BI_RGB pixels are 0x00RRGGBB until we write alpha.
+            let coverage = ((px >> 16) & 0xFF).max((px >> 8) & 0xFF).max(px & 0xFF);
+
+            pixels[idx] = if coverage == 0 {
+                0
+            } else {
+                let pm = |c: u32| (c * coverage) / 255;
+                (coverage << 24) | (pm(r) << 16) | (pm(g) << 8) | pm(b)
+            };
+        }
     }
 }
 
