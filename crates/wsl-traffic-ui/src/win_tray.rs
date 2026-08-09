@@ -296,6 +296,47 @@ unsafe extern "system" fn WndProc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: 
 /// Resource id of the application icon embedded by the app crate's build script.
 const IDI_APP_ICON: u16 = 1;
 
+/// Announce that the app is running and where to find it.
+///
+/// The application has no window, no taskbar button and no Alt-Tab entry, and
+/// Windows 11 hides newly registered tray icons in the overflow flyout by default.
+/// Launching it therefore looks like nothing happened at all, which reads as a
+/// failed start rather than a background service. One balloon on startup is the
+/// convention for tray-only applications and costs nothing if the user has
+/// notifications suppressed.
+#[allow(unsafe_code)]
+fn show_startup_balloon(hwnd: HWND) {
+    use windows::Win32::UI::Shell::{NIF_INFO, NIIF_INFO};
+
+    let mut nid = NOTIFYICONDATAW {
+        cbSize: std::mem::size_of::<NOTIFYICONDATAW>() as u32,
+        hWnd: hwnd,
+        uID: 1,
+        uFlags: NIF_INFO,
+        dwInfoFlags: NIIF_INFO,
+        ..Default::default()
+    };
+
+    copy_wide(&mut nid.szInfoTitle, "WSL Traffic Monitor is running");
+    copy_wide(
+        &mut nid.szInfo,
+        "It lives in the system tray. Click the arrow next to the clock if you \
+         cannot see it, then right-click the icon for history, settings and exit.",
+    );
+
+    unsafe {
+        let _ = Shell_NotifyIconW(NIM_MODIFY, &nid);
+    }
+}
+
+/// Copy a string into a fixed-size UTF-16 buffer, truncating and null-terminating.
+fn copy_wide(dst: &mut [u16], text: &str) {
+    let wide: Vec<u16> = text.encode_utf16().collect();
+    let len = wide.len().min(dst.len() - 1);
+    dst[..len].copy_from_slice(&wide[..len]);
+    dst[len] = 0;
+}
+
 /// Load the embedded application icon, falling back to the system default.
 ///
 /// This is the icon shown in Alt-Tab, the taskbar and the window's own frame. The
@@ -758,6 +799,8 @@ pub fn run_tray_ui<P: NetworkProvider>(
         if !res.as_bool() {
             return Err(UiError::TrayIconInitializationFailed);
         }
+
+        show_startup_balloon(hwnd);
 
         // Safety: SetTimer schedules 1-second ticks in WndProc timer.
         let timer = SetTimer(Some(hwnd), TRAY_TIMER_ID, 1000, None);
