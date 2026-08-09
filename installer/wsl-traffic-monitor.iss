@@ -54,6 +54,17 @@ DisableProgramGroupPage=yes
 UninstallDisplayIcon={app}\{#AppExeName}
 UninstallDisplayName={#AppName}
 
+; The application creates this mutex as its single-instance guard. Inno checks for
+; it during install and uninstall and asks the user to close the app if present,
+; which avoids failing on a locked executable or a redb database still held open.
+;
+; This replaces a hand-written [Code] routine that called FindWindowW to post
+; WM_CLOSE. That routine declared FindWindowW with one parameter when it takes two;
+; under stdcall the callee cleans the stack, so setup corrupted its own stack and
+; crashed before extracting anything. Inno's own check does the job without any
+; hand-declared FFI.
+AppMutex=WslTrafficMonitorSingleInstanceMutex
+
 LicenseFile=..\LICENSE
 OutputDir=.\dist
 OutputBaseFilename=wsl-traffic-monitor-{#AppVersion}-setup
@@ -100,77 +111,15 @@ Filename: "{app}\{#AppExeName}"; Description: "Launch {#AppName} now"; \
     Flags: nowait postinstall skipifsilent
 
 [UninstallDelete]
-; The tray app has no uninstall hook, so remove the Run entry defensively even
-; when the startup task was not selected at install time.
+; Anything the application writes beside itself at runtime. The Run registry value
+; is removed by the uninsdeletevalue flag above, and user data under %APPDATA% is
+; handled by CurUninstallStepChanged so it can be kept if the user wants it.
 Type: files; Name: "{app}\*.log"
 
 [Code]
-{ The application holds an exclusive lock on its own executable while running, and
-  redb holds one on the history database. Installing or uninstalling over a live
-  instance fails with a file-in-use error, so close it first. The window class name
-  is the reliable handle: the process name changes between portable and installed
-  builds, and there is no visible main window to find by caption. }
-
-const
-  TrayWindowClass = 'WSLTrafficMonitorClass';
-  WM_CLOSE = $0010;
-
-function FindWindowByClassName(ClassName: string): HWND;
-external 'FindWindowW@user32.dll stdcall delayload';
-
-function PostMessageW(hWnd: HWND; Msg: UINT; wParam: Longint; lParam: Longint): BOOL;
-external 'PostMessageW@user32.dll stdcall delayload';
-
-{ Ask a running instance to exit, then wait for the window to disappear.
-  Returns True if no instance remains. }
-function StopRunningInstance(): Boolean;
-var
-  Wnd: HWND;
-  Waited: Integer;
-begin
-  Wnd := FindWindowByClassName(TrayWindowClass);
-  if Wnd = 0 then
-  begin
-    Result := True;
-    Exit;
-  end;
-
-  { WM_CLOSE reaches the utility window's WndProc, which tears down the overlay,
-    releases the tray icon and flushes pending history to disk. Killing the process
-    would skip the flush and lose up to a minute of recorded usage. }
-  PostMessageW(Wnd, WM_CLOSE, 0, 0);
-
-  Waited := 0;
-  while (Waited < 10000) and (FindWindowByClassName(TrayWindowClass) <> 0) do
-  begin
-    Sleep(250);
-    Waited := Waited + 250;
-  end;
-
-  Result := FindWindowByClassName(TrayWindowClass) = 0;
-end;
-
-function PrepareToInstall(var NeedsRestart: Boolean): String;
-begin
-  if StopRunningInstance() then
-    Result := ''
-  else
-    Result := 'WSL Traffic Monitor is still running and could not be closed automatically.' + #13#10 +
-              'Please exit it from the system tray (right-click the icon, then Exit) and run this installer again.';
-end;
-
-function InitializeUninstall(): Boolean;
-begin
-  if not StopRunningInstance() then
-  begin
-    MsgBox('WSL Traffic Monitor is still running.' + #13#10 +
-           'Please exit it from the system tray, then run the uninstaller again.',
-           mbError, MB_OK);
-    Result := False;
-  end
-  else
-    Result := True;
-end;
+{ Only Inno built-ins are used here. Declaring Windows API functions by hand in
+  this section is how an earlier revision crashed setup, so the running-instance
+  check is handled by the AppMutex directive above instead. }
 
 procedure CurUninstallStepChanged(CurUninstallStep: TUninstallStep);
 var
