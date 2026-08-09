@@ -90,9 +90,14 @@ jobs:
         shell: pwsh
         run: |
           $version = "${{ github.ref_name }}" -replace '^v', ''
-          Write-Host "Building installer for version $version"
+          # VERSIONINFO accepts dotted numbers only, so strip any prerelease suffix
+          # (0.6.1-rc1 -> 0.6.1). The full string is still used for display and the
+          # output filename.
+          $numeric = ($version -split '-')[0]
+          Write-Host "Building installer: display=$version versioninfo=$numeric"
           & "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe" `
             "/DAppVersion=$version" `
+            "/DNumericVersion=$numeric" `
             "/DSourceExe=..\target\release\wsl-traffic-monitor.exe" `
             "installer\wsl-traffic-monitor.iss"
           if ($LASTEXITCODE -ne 0) { throw "Inno Setup failed with exit code $LASTEXITCODE" }
@@ -217,4 +222,4 @@ jobs:
             SHA256SUMS.txt
           body_path: release_notes.md
           draft: false
-          prerelease: false
+          prerelease: ${{ contains(github.ref_name, '-') }}

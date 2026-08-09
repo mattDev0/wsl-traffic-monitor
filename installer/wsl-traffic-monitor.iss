@@ -10,9 +10,17 @@
 ;
 ; Built in CI by .github/workflows/release.yml. To build locally you need Inno Setup 6:
 ;   iscc /DAppVersion=0.6.0 /DSourceExe=path\to\wsl-traffic-monitor.exe wsl-traffic-monitor.iss
+;
+; AppVersion is the display string and may carry a prerelease suffix (0.6.1-rc1).
+; NumericVersion feeds the Win32 VERSIONINFO resource, which accepts only dotted
+; numbers -- passing a prerelease string there fails compilation outright.
 
 #ifndef AppVersion
   #define AppVersion "0.0.0"
+#endif
+
+#ifndef NumericVersion
+  #define NumericVersion "0.0.0"
 #endif
 
 #ifndef SourceExe
@@ -35,7 +43,7 @@ AppPublisher={#AppPublisher}
 AppPublisherURL={#AppUrl}
 AppSupportURL={#AppUrl}/issues
 AppUpdatesURL={#AppUrl}/releases
-VersionInfoVersion={#AppVersion}
+VersionInfoVersion={#NumericVersion}
 
 ; Per-user install: no elevation, installs under %LOCALAPPDATA%\Programs.
 PrivilegesRequired=lowest
