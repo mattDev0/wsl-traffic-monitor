@@ -10,7 +10,7 @@ This repository contains a full **v0.5.0 Pre-Release**. It includes the core NAT
 - **Windows Smoke-Testing**: The tray icon, floating overlay, and history persistence are feature-complete. Extended validation for long-running uptime, Explorer restarts, and Windows network-change events is tracked in `docs/windows_smoke_test_checklist.md`.
 - **Docker Desktop**: Docker installations and WSL backend VMs are detected to improve confidence scoring, but their NAT traffic is currently blended with regular WSL traffic and is not explicitly separated.
 - **Networking Modes**: NAT mode is fully supported for host-side tracking. Mirrored, VirtioProxy, and `none` modes are detected in `.wslconfig` and safely reported as unsupported without mutating user config.
-- **Code Signing**: Official release binaries are currently unsigned self-built binaries from GitHub Actions CI.
+- **Code Signing**: Release binaries are currently **unsigned**, so Windows SmartScreen warns on first run (More info -> Run anyway). Azure Trusted Signing is provisioned and wired into the release workflow, but no certificate can be issued until Microsoft completes identity validation. See [ADR 0001](docs/adr/0001-code-signing-strategy.md). Verify the SHA-256 checksum published with each release in the meantime.
 
 ## Current Status
 
@@ -25,6 +25,20 @@ This repository contains a full **v0.5.0 Pre-Release**. It includes the core NAT
 ## Demo
 
 ![demo](docs/assets/demo.gif)
+
+## Installation
+
+Download from the [latest release](https://github.com/mattDev0/wsl-traffic-monitor/releases):
+
+- **`wsl-traffic-monitor-<version>-setup.exe`** — installer. Per-user, no administrator
+  rights required, and offers a "start when I sign in" option.
+- **`wsl-traffic-monitor-<version>-windows-x64.zip`** — portable build.
+
+Prefer the installer if you want the app to run at sign-in. Autostart records the
+executable's current path, so with the portable build, moving the folder silently breaks
+startup.
+
+Requires Windows 10 version 1903 or later.
 
 ## Running the Application & Harness
 

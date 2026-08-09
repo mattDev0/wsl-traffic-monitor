@@ -7,15 +7,22 @@ on:
 
 permissions:
   contents: write
+  id-token: write # required for Azure OIDC federation
 
 env:
   CARGO_TERM_COLOR: always
   RUSTFLAGS: "-D warnings"
+  SIGNING_ENDPOINT: https://eus.codesigning.azure.net/
+  SIGNING_ACCOUNT: wsl-traffic-signing
+  SIGNING_PROFILE: release
 
 jobs:
   publish-release:
     name: Build & Publish Release
     runs-on: windows-latest
+    # Matches the subject of the Azure federated credential:
+    # repo:mattDev0/wsl-traffic-monitor:environment:release
+    environment: release
 
     steps:
       - name: Checkout Repository
@@ -39,58 +46,175 @@ jobs:
       - name: Build Windows Release Binary
         run: cargo build --release --package wsl-traffic-monitor-app
 
+      # Signing is optional so a tagged release still publishes before Trusted
+      # Signing identity validation completes. Every downstream step reports which
+      # mode it ran in, so an unsigned release is never mistaken for a signed one.
+      - name: Determine Signing Availability
+        id: signing
+        shell: pwsh
+        env:
+          AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+        run: |
+          if ([string]::IsNullOrEmpty($env:AZURE_CLIENT_ID)) {
+            Write-Host "::warning::Azure signing credentials absent - publishing UNSIGNED artifacts."
+            "enabled=false" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+          } else {
+            "enabled=true" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+          }
+
+      - name: Azure Login (OIDC)
+        if: steps.signing.outputs.enabled == 'true'
+        uses: azure/login@v2
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Sign Executable
+        if: steps.signing.outputs.enabled == 'true'
+        uses: azure/trusted-signing-action@v0.5.1
+        with:
+          endpoint: ${{ env.SIGNING_ENDPOINT }}
+          trusted-signing-account-name: ${{ env.SIGNING_ACCOUNT }}
+          certificate-profile-name: ${{ env.SIGNING_PROFILE }}
+          files-folder: target/release
+          files-folder-filter: exe
+          file-digest: SHA256
+          timestamp-rfc3161: http://timestamp.acs.microsoft.com
+          timestamp-digest: SHA256
+
+      - name: Install Inno Setup
+        run: choco install innosetup --no-progress -y
+
+      - name: Build Installer
+        shell: pwsh
+        run: |
+          $version = "${{ github.ref_name }}" -replace '^v', ''
+          Write-Host "Building installer for version $version"
+          & "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe" `
+            "/DAppVersion=$version" `
+            "/DSourceExe=..\target\release\wsl-traffic-monitor.exe" `
+            "installer\wsl-traffic-monitor.iss"
+          if ($LASTEXITCODE -ne 0) { throw "Inno Setup failed with exit code $LASTEXITCODE" }
+
+      # The installer embeds the already-signed executable, but the installer itself
+      # is a separate binary and needs its own signature - it is the file users
+      # actually download and double-click, so it is the one SmartScreen judges.
+      - name: Sign Installer
+        if: steps.signing.outputs.enabled == 'true'
+        uses: azure/trusted-signing-action@v0.5.1
+        with:
+          endpoint: ${{ env.SIGNING_ENDPOINT }}
+          trusted-signing-account-name: ${{ env.SIGNING_ACCOUNT }}
+          certificate-profile-name: ${{ env.SIGNING_PROFILE }}
+          files-folder: installer/dist
+          files-folder-filter: exe
+          file-digest: SHA256
+          timestamp-rfc3161: http://timestamp.acs.microsoft.com
+          timestamp-digest: SHA256
+
+      - name: Verify Signatures
+        if: steps.signing.outputs.enabled == 'true'
+        shell: pwsh
+        run: |
+          $targets = @(
+            "target\release\wsl-traffic-monitor.exe",
+            (Get-ChildItem "installer\dist\*.exe" | Select-Object -First 1).FullName
+          )
+          foreach ($t in $targets) {
+            $sig = Get-AuthenticodeSignature $t
+            Write-Host "$t -> $($sig.Status)"
+            if ($sig.Status -ne 'Valid') {
+              throw "Signature verification failed for ${t}: $($sig.Status)"
+            }
+            Write-Host "  signer: $($sig.SignerCertificate.Subject)"
+          }
+
       - name: Prepare Artifact Package
-        shell: powershell
+        shell: pwsh
         run: |
           $TAG = "${{ github.ref_name }}"
           $ZIP_NAME = "wsl-traffic-monitor-$TAG-windows-x64.zip"
           $EXE_PATH = "target/release/wsl-traffic-monitor.exe"
-          
-          # Create staging folder
-          New-Item -ItemType Directory -Path "dist_staging" -Force
+
+          New-Item -ItemType Directory -Path "dist_staging" -Force | Out-Null
           Copy-Item $EXE_PATH -Destination "dist_staging\wsl-traffic-monitor.exe"
           Copy-Item "README.md" -Destination "dist_staging\README.md"
           Copy-Item "CHANGELOG.md" -Destination "dist_staging\CHANGELOG.md"
-          
-          # Zip staging folder
-          Compress-Archive -Path "dist_staging\*" -DestinationPath $ZIP_NAME -Force
-          
-          # Generate SHA256 Hash
-          $hash = (Get-FileHash -Algorithm SHA256 $ZIP_NAME).Hash.ToLower()
-          "$hash  $ZIP_NAME" | Out-File -Encoding ascii "SHA256SUMS.txt"
-          
-          # Verify ZIP contents and checksum integrity
+          Copy-Item "LICENSE" -Destination "dist_staging\LICENSE"
+
           $contents = (Get-ChildItem -Path "dist_staging").Name
-          if (-not ($contents -contains "wsl-traffic-monitor.exe" -and $contents -contains "README.md" -and $contents -contains "CHANGELOG.md")) {
-              Write-Error "Staging folder missing expected artifacts!"
-              exit 1
+          foreach ($required in @("wsl-traffic-monitor.exe", "README.md", "CHANGELOG.md", "LICENSE")) {
+            if (-not ($contents -contains $required)) {
+              throw "Staging folder missing expected artifact: $required"
+            }
           }
 
-          $computed = (Get-FileHash -Algorithm SHA256 $ZIP_NAME).Hash.ToLower()
-          $stored = (Get-Content "SHA256SUMS.txt").Split()[0].Trim()
-          if ($computed -ne $stored) {
-              Write-Error "SHA256 checksum mismatch!"
-              exit 1
-          }
-          Write-Host "Artifact integrity validation passed successfully."
+          Compress-Archive -Path "dist_staging\*" -DestinationPath $ZIP_NAME -Force
 
-          echo "ZIP_NAME=$ZIP_NAME" >> $env:GITHUB_ENV
+          $SETUP = (Get-ChildItem "installer\dist\*.exe" | Select-Object -First 1)
+          if (-not $SETUP) { throw "Installer was not produced" }
+          Copy-Item $SETUP.FullName -Destination "."
+          $SETUP_NAME = $SETUP.Name
+
+          # One checksum file covering every published artifact.
+          $lines = @()
+          foreach ($f in @($ZIP_NAME, $SETUP_NAME)) {
+            $hash = (Get-FileHash -Algorithm SHA256 $f).Hash.ToLower()
+            $lines += "$hash  $f"
+          }
+          $lines -join "`n" | Out-File -Encoding ascii "SHA256SUMS.txt"
+
+          foreach ($line in (Get-Content "SHA256SUMS.txt")) {
+            $parts = $line -split '\s+'
+            $computed = (Get-FileHash -Algorithm SHA256 $parts[1]).Hash.ToLower()
+            if ($computed -ne $parts[0]) { throw "SHA256 checksum mismatch for $($parts[1])" }
+          }
+          Write-Host "Artifact integrity validation passed."
+
+          "ZIP_NAME=$ZIP_NAME" | Out-File -Encoding utf8 -Append $env:GITHUB_ENV
+          "SETUP_NAME=$SETUP_NAME" | Out-File -Encoding utf8 -Append $env:GITHUB_ENV
+
+      - name: Compose Release Notes
+        shell: pwsh
+        run: |
+          $signed = "${{ steps.signing.outputs.enabled }}" -eq "true"
+          $signingLine = if ($signed) {
+            "- **Signing**: Signed via Azure Trusted Signing. Verify with ``Get-AuthenticodeSignature``."
+          } else {
+            "- **Signing**: **UNSIGNED**. Windows SmartScreen will warn on first run (More info -> Run anyway). Verify the SHA-256 checksum below before running."
+          }
+
+          @"
+          ## WSL Traffic Monitor ``${{ github.ref_name }}``
+
+          ### Install
+
+          - ``${{ env.SETUP_NAME }}`` - installer. Per-user, no administrator rights needed.
+          - ``${{ env.ZIP_NAME }}`` - portable build. Note that autostart records the executable's
+            current path, so moving the folder breaks startup; prefer the installer if you want
+            it to run at sign-in.
+
+          ### Verification & Integrity
+
+          - **Platform**: Windows x64 (``x86_64-pc-windows-msvc``), Windows 10 1903 or later
+          $signingLine
+          - **Checksums**: see ``SHA256SUMS.txt``
+
+          ### Measurement scope
+
+          NAT networking mode only. Mirrored, VirtioProxy and disabled networking are detected
+          and reported as unsupported; ``.wslconfig`` is never modified. Docker Desktop traffic
+          shares the WSL NAT adapter and is not separated out.
+          "@ | Out-File -Encoding utf8 release_notes.md
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
           files: |
             ${{ env.ZIP_NAME }}
+            ${{ env.SETUP_NAME }}
             SHA256SUMS.txt
-          body: |
-            ## WSL Traffic Monitor Release `${{ github.ref_name }}`
-
-            ### Verification & Integrity
-            - **Platform**: Windows x64 (`x86_64-pc-windows-msvc`)
-            - **Signing**: *Unsigned Release Binary* (Self-built via GitHub Actions CI)
-            - **Checksums**: See attached `SHA256SUMS.txt`
-
-            ### Artifacts
-            - `${{ env.ZIP_NAME }}`: Portable executable and documentation.
+          body_path: release_notes.md
           draft: false
           prerelease: false
