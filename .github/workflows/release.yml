@@ -12,6 +12,12 @@ permissions:
 env:
   CARGO_TERM_COLOR: always
   RUSTFLAGS: "-D warnings"
+  # Signing is currently INACTIVE. Azure Trusted Signing was provisioned and then
+  # withdrawn: Public Trust certificates are not offered in this project's
+  # jurisdiction (see docs/adr/0001-code-signing-strategy.md). These values are
+  # retained as the shape the pipeline expects. Restoring signing means setting the
+  # AZURE_* environment secrets again and pointing these at a real account, or
+  # swapping the signing steps for whichever provider is adopted.
   SIGNING_ENDPOINT: https://eus.codesigning.azure.net/
   SIGNING_ACCOUNT: wsl-traffic-signing
   SIGNING_PROFILE: release

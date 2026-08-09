@@ -10,8 +10,10 @@ All notable changes to this project will be documented in this file.
   uninstall so pending usage history is flushed rather than lost.
 - **Windows version resource and application icon**. `Properties -> Details` now reports
   the real version, product name and licence; the generic system icon is gone.
-- **Azure Trusted Signing pipeline**, authenticating by OIDC federation. Inactive until
-  Microsoft identity validation completes; releases are labelled UNSIGNED until then.
+- **Signing pipeline** in the release workflow, currently inactive. Azure Trusted Signing
+  was provisioned and withdrawn the same day: Microsoft does not offer Public Trust
+  certificates in this project's jurisdiction. Releases are labelled UNSIGNED and publish
+  SHA-256 sums for every artifact. See ADR 0001.
 - `-v` / `--version` flag.
 - Unattended `--auto` protocol in the Phase 0 logger, with phase markers and a computed
   verdict on directionality and isolation.

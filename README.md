@@ -10,7 +10,7 @@ This repository contains a full **v0.5.0 Pre-Release**. It includes the core NAT
 - **Windows Smoke-Testing**: The tray icon, floating overlay, and history persistence are feature-complete. Extended validation for long-running uptime, Explorer restarts, and Windows network-change events is tracked in `docs/windows_smoke_test_checklist.md`.
 - **Docker Desktop**: Docker installations and WSL backend VMs are detected to improve confidence scoring, but their NAT traffic is currently blended with regular WSL traffic and is not explicitly separated.
 - **Networking Modes**: NAT mode is fully supported for host-side tracking. Mirrored, VirtioProxy, and `none` modes are detected in `.wslconfig` and safely reported as unsupported without mutating user config.
-- **Code Signing**: Release binaries are currently **unsigned**, so Windows SmartScreen warns on first run (More info -> Run anyway). Azure Trusted Signing is provisioned and wired into the release workflow, but no certificate can be issued until Microsoft completes identity validation. See [ADR 0001](docs/adr/0001-code-signing-strategy.md). Verify the SHA-256 checksum published with each release in the meantime.
+- **Code Signing**: Release binaries are **unsigned**, so Windows SmartScreen warns on first run (More info -> Run anyway). Azure Trusted Signing was evaluated and ruled out: Microsoft does not offer Public Trust certificates in this project's jurisdiction. Alternatives are being pursued; see [ADR 0001](docs/adr/0001-code-signing-strategy.md). Verify the SHA-256 checksum published with each release before running.
 
 ## Current Status
 

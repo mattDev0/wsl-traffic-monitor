@@ -1,7 +1,7 @@
 # ADR 0001: Code Signing Strategy for Windows Release Binaries
 
-- **Status**: Accepted — infrastructure provisioned, blocked on identity validation
-- **Date**: 2026-08-01 (provisioned 2026-08-09)
+- **Status**: Superseded — Azure Trusted Signing is not available in our jurisdiction
+- **Date**: 2026-08-01 (provisioned and withdrawn 2026-08-09)
 - **Deciders**: Core Architecture Team
 - **Technical Story**: Windows Tray Application Trust & SmartScreen Friction
 
@@ -61,77 +61,88 @@ Generating a project-specific CA and signing release binaries locally.
 
 Adopt **Option 1: Azure Trusted Signing**.
 
-## Implementation Status
+## Outcome: Azure Trusted Signing rejected
 
-### Provisioned (2026-08-09)
+Trusted Signing was provisioned on 2026-08-09 and **withdrawn the same day**. The
+option was evaluated on cost and CI integration, but not on eligibility, and eligibility
+is what disqualifies it.
 
-| Resource | Value |
-|---|---|
-| Subscription | `820beeb9-30c6-41bf-b6a8-8765f9e35d83` (Azure for Students Starter) |
-| Resource group | `rg-wsl-traffic-monitor` (eastus) |
-| Signing account | `wsl-traffic-signing`, SKU **Basic** |
-| Account endpoint | `https://eus.codesigning.azure.net/` |
-| GitHub Actions identity | App registration `wsl-traffic-monitor-github-actions` |
-| Role | Artifact Signing Certificate Profile Signer, scoped to the signing account |
+### Why
 
-The release workflow authenticates by **OIDC federation**, not a client secret. A
-federated credential on the app registration trusts the subject
-`repo:mattDev0/wsl-traffic-monitor:environment:release`, which is why the release job
-declares `environment: release` and `permissions: id-token: write`.
+Microsoft restricts Public Trust certificates by geography
+([documentation](https://learn.microsoft.com/en-us/azure/artifact-signing/quickstart)):
 
-This supersedes step 2 of the original plan. `AZURE_CLIENT_SECRET` is deliberately
-absent: with federation there is no long-lived secret to store, leak or rotate. The
-three values held as environment secrets (`AZURE_CLIENT_ID`, `AZURE_TENANT_ID`,
-`AZURE_SUBSCRIPTION_ID`) are identifiers rather than credentials — they grant nothing
-without a token issued to that exact repository and environment.
+> Public Trust certificates are available to organizations in the United States, Canada,
+> the European Union, the United Kingdom, Australia, New Zealand, Japan, South Korea,
+> Singapore, Switzerland, Norway, and Israel. Individual developers must be located in
+> the United States or Canada. These geographic restrictions do not apply to Private
+> Trust certificates.
 
-### Blocked: identity validation
+This project is maintained from **Nigeria**, which appears on neither list. Incorporating
+would not help, since the organisation list does not include it either.
 
-No certificate profile exists yet, so **releases are still published unsigned**.
-Creating one requires an `identityValidationId`, and identity validation is a manual
-Microsoft review that cannot be driven from the CLI or any API:
+Private Trust carries no geographic restriction but requires every user to install the
+project's root certificate before the signature means anything. That is workable for a
+managed fleet and useless for public distribution through GitHub Releases.
 
-```
-PUT .../certificateProfiles/release
--> ObjectMissingRequiredProperty: identityValidationId
-```
+### What was provisioned and removed
 
-To complete it:
+A resource group, a Basic-SKU signing account, an app registration with OIDC federation,
+and a role assignment were created, then deleted once the restriction was found. The
+GitHub environment secrets were removed first: had they remained, the release workflow
+would have detected credentials and attempted to sign against a deleted identity, turning
+a working unsigned release into a failing one.
 
-1. Azure Portal → the `wsl-traffic-signing` account → **Identity validation** → start a
-   request. Individuals verify with government ID; organisations submit legal entity
-   documents and need 3+ years of verifiable history.
-2. Wait for Microsoft approval (typically 1–7 business days).
-3. Create a **public trust** certificate profile named `release` — the name the workflow
-   expects via `SIGNING_PROFILE`. If a different name is used, update that variable.
-4. Re-run the release workflow. It detects the credentials and signs automatically.
+Cost incurred was one partial day of Basic SKU.
 
-### Behaviour before validation completes
+### Lesson for the next option
 
-The workflow does not fail without signing. It checks whether `AZURE_CLIENT_ID` is
-present and, if not, emits a CI warning, skips the signing and verification steps, and
-labels the release notes **UNSIGNED** with instructions to verify the SHA-256 checksum.
+Eligibility should be confirmed before provisioning. The original evaluation compared
+cost, CI integration and SmartScreen behaviour across three options and recorded
+"requires Microsoft Azure active subscription and identity validation" as the only
+constraint on Option 1. Whether the maintainer could legally obtain a certificate was
+never asked.
 
-This is deliberate. A release pipeline that hard-fails without signing would block
-shipping entirely during the validation wait, and one that silently skipped signing
-would let an unsigned build be mistaken for a signed one. Announcing the mode in the
-published notes is the honest middle path.
+## Revised options
 
-Both the executable and the installer are signed once enabled. The installer is a
-separate binary and is the file users actually download and double-click, so it is the
-one SmartScreen judges.
+### Option A: SignPath Foundation (preferred)
 
-### Verification
+Free code-signing certificates for open-source projects, with GitHub Actions
+integration. Eligibility is assessed on the project — public repository, OSS licence,
+reproducible builds — rather than the maintainer's location, which is precisely the
+constraint that ruled out Trusted Signing. GPL-3.0 with a public repository fits their
+stated profile.
 
-Signatures are checked in CI with `Get-AuthenticodeSignature`, and the job fails if the
-status is anything other than `Valid`. Users can run the same check locally:
+Unverified: whether Nigeria-based maintainers are accepted. That is the question to put
+to them before any further work.
 
-```powershell
-Get-AuthenticodeSignature .\wsl-traffic-monitor-<version>-setup.exe | Format-List
-```
+### Option B: Certum Open Source Code Signing
 
-### Cost
+A Polish CA issuing to open-source developers internationally at roughly €90/year,
+materially cheaper than DigiCert or Sectigo. Current versions require a hardware token
+or cloud HSM; token delivery to Nigeria needs checking before purchase.
 
-Trusted Signing Basic bills roughly $10/month. It is live from 2026-08-09, before any
-certificate can be issued — the account is billable independently of whether identity
-validation has completed.
+### Option C: Ship unsigned with checksum verification (current state)
+
+What the project does today, and what many open-source Windows tools do. Users see a
+SmartScreen warning once and click through. Every release publishes SHA-256 sums for
+each artifact, and the release notes state plainly that the build is unsigned and how to
+verify it.
+
+## Decision
+
+Adopt **Option C** for now and pursue **Option A** in parallel. An OV certificate at
+£200-400/year is difficult to justify at this stage, and it earns SmartScreen reputation
+gradually rather than immediately, so it would not deliver the step change that motivated
+this ADR.
+
+## Pipeline status
+
+The signing integration remains in `.github/workflows/release.yml` and is dormant. It
+checks whether signing credentials are present; absent, it emits a CI warning, skips
+signing and verification, and labels the release notes UNSIGNED with instructions to
+verify the checksum.
+
+Whatever certificate is eventually obtained, the integration point is one step in that
+workflow. The Trusted Signing action would be swapped for the relevant equivalent and the
+credentials restored as environment secrets. Nothing else changes.
