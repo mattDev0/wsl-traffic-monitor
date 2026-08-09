@@ -81,12 +81,16 @@ Reproduce with `experiment.exe --auto > run.log` on a quiet network with any VPN
 ## 3. Performance & Overhead Assessment
 Measure resources using Windows Task Manager / Process Hacker while the application is active:
 
-*   **Idle CPU Usage**: [Not measured] (Target: <0.2%)
-*   **Active CPU Usage**: [Not measured]
-*   **Private Working Set (Memory)**: [Not measured] (Target: <30 MB)
+Observed in Task Manager on 2026-08-09 (Windows 11 build 10.0.26200.8875):
 
-> The logger records no resource metrics, so the 2026-08-05 run produced no data here.
-> Requires observation under Task Manager during a sustained session.
+*   **Idle CPU Usage**: 0% (Target: <0.2%) — PASS
+*   **Active CPU Usage**: 0% — PASS
+*   **Memory (Task Manager Processes column)**: 2.2 MB (Target: <30 MB) — PASS
+
+> Task Manager rounds CPU to whole percent, so 0% means below rounding resolution rather
+> than a precise figure. These are instantaneous readings; sustained behaviour and any
+> handle/GDI growth over a long session remain untested (case 8 of the smoke checklist).
+> The Processes-tab memory column is the working set, not strictly the private working set.
 
 **Raw Logs**: [validation_run_v3.log](./validation_run_v3.log) — 2026-08-05 automated run, the evidence for cases 1-3 above.
 
